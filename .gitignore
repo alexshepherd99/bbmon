@@ -216,3 +216,9 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Claude Code
+#   Machine-local permissions and settings — holds absolute paths, not shareable.
+#   Shared project config is .claude/settings.json, which IS tracked.
+.claude/settings.local.json
+.claude/settings.local.json.tmp.*
