@@ -4,9 +4,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this repo is
 
-`bbmon` — home broadband monitoring running headless on a Raspberry Pi. See
-`REQUIREMENTS.md` for the full spec: phased requirements, platform assumptions,
-and the open questions still to be decided.
+`bbmon` — home broadband monitoring running headless on a Raspberry Pi.
+
+Development happens on a Chromebook under Crostini; a Pi is not involved until
+late in the cycle. Assume no Pi hardware is available unless told otherwise.
+
+Persistent docs follow `agentic`'s `shared/persistent-docs.md`:
+- `BACKLOG.md` — not-yet-started work.
+- `docs/phase-1/` — the current effort's `requirements.md`, `plan.md`, `log.md`.
+  Its "Open decisions" section lists what is genuinely still undecided.
 
 ## Shared agents/skills/conventions
 
