@@ -40,3 +40,11 @@ Deploy transport chosen deliberately as two paths, not one: `deploy.sh` rsyncs t
 Discovered and not yet resolved: the Crostini container cannot resolve or reach `raspberrypi` although ChromeOS itself can, so the container is likely off the home network. Deferred to the start of M2 by agreement rather than chased now. `rsync` is also not yet installed in the container.
 
 Next: M1.
+
+## 2026-08-05 — Superseded text is deleted here, not annotated
+
+`requirements.md` was first updated using `agentic`'s persistent-docs convention, which keeps superseded wording in place under a dated marker. On review that was rejected for this repo: the annotated version left a reader holding two contradictory statements and working out which one is current, and git already provides the recovery the convention is protecting.
+
+Standing decision for bbmon: **state the current truth directly and delete what it replaces.** The reasoning behind a change belongs in this log, which is append-only and is the right place to look for what was believed when.
+
+This diverges from the shared convention rather than reinterpreting it. Not yet proposed back to `agentic`.
