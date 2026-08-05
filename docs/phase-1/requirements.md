@@ -18,13 +18,15 @@ A headless Python application that runs on a Raspberry Pi, starting automaticall
 
 ### Development (Chromebook / Crostini)
 
+> **[Superseded 2026-08-05]** A Raspberry Pi is available from the outset, reachable over SSH when at home. The container-based development machine and everything it rules out below still stand; what changed is *when* the Pi is involved. Hardware access is intermittent rather than absent, so Pi-only verification is batched into gates (G1–G4) cleared on a home visit, rather than deferred to a final milestone — see `plan.md`. Individual bullets below carry their own markers where the specific instruction changed.
+
 Phase 1 is developed on a Chromebook in a Crostini Linux container. **There is no Raspberry Pi in the loop until late in the cycle** — the Pi is a deployment target, not the development environment. This sharpens requirement 10's "dev/test away from the Pi" from a nice-to-have into the default working mode, and moves several things to a Pi-only verification stage:
 
 - **systemd** — the Crostini container runs systemd, but unit files, `After=`/`Requires=` ordering, and `Restart=on-failure` behaviour are only meaningfully verified on the Pi. Every service therefore needs a plain module entrypoint that runs standalone, with the systemd unit as a thin wrapper around it.
-- **ICMP** — unprivileged ping depends on `net.ipv4.ping_group_range` inside the container; raw sockets need `CAP_NET_RAW`. The pinger needs an approach that works unprivileged, or a documented dev fallback if it does not.
-- **Reboot** — never actually invoked in dev. This is the abstraction requirement 10 already calls for; the no-op implementation is the dev default and the only one exercised before Pi deployment.
+- **ICMP** — unprivileged ping depends on `net.ipv4.ping_group_range` inside the container; raw sockets need `CAP_NET_RAW`. The pinger needs an approach that works unprivileged, or a documented dev fallback if it does not. *[Superseded 2026-08-05: resolved — shell out to the system `ping` binary with an argv list, which is already setuid/setcap and so works unprivileged on both platforms with no `CAP_NET_RAW` grant on the service. Confirmed on the Pi at gate G1.]*
+- **Reboot** — never actually invoked in dev. This is the abstraction requirement 10 already calls for; the no-op implementation is the dev default and the only one exercised before Pi deployment. *[Superseded 2026-08-05: the no-op remains the dev default, but the real implementation is decided (narrow sudoers rule) and exercised on hardware at gate G3, not deferred to the end.]*
 - **Speed test figures are not comparable** — Crostini sits behind ChromeOS's virtual network, so dev throughput numbers validate the code path, not the measurement. Only Pi runs produce meaningful data.
-- **LAN reachability** — Crostini does not expose ports to the LAN by default, so "usable from a phone on the LAN" (requirement 7) is verified at the Pi stage; dev testing is localhost-only.
+- **LAN reachability** — Crostini does not expose ports to the LAN by default, so "usable from a phone on the LAN" (requirement 7) is verified at the Pi stage; dev testing is localhost-only. *[Superseded 2026-08-05: still Pi-verified, but at gate G1 — early. A related unknown surfaced: the container cannot currently resolve or reach the Pi at all, though ChromeOS itself can; diagnosis deferred to M2.]*
 - **CPU architecture** — the Chromebook is x86_64 (or arm64 on some models); the Pi is ARM. Prefer pure-Python dependencies; anything shipping native wheels must be confirmed installable on the Pi before it is locked in.
 - **Low-spec behaviour is unverifiable in dev** — a Chromebook will not surface the CPU/memory pressure of a Pi Zero 2 W. Requirement 10's low-spec constraint is a design discipline during development and a measurement only once on the Pi.
 
@@ -128,9 +130,9 @@ A shared Python package (e.g. `bbmon/`) holds common code: config loader, DB acc
 
 ## Open decisions
 
-Unresolved. None are settled — do not build on a guess.
+> **[Superseded 2026-08-05]** All four are now closed. The decisions and their reasoning live in `plan.md` under "Decisions taken with this plan"; the original wording is kept below for history. Nothing here is still open — do not treat these as questions.
 
-- **Default ping target list** — is `8.8.8.8` / `1.1.1.1` / `google.com` the right default set? Blocks: config defaults (item 2).
-- **Web port and route structure** — default port 8080; is the config/admin page a separate route on the same Flask app, or a distinct app? Blocks: web milestone (items 7, 8).
-- **Purge job placement** — does the daily ping-retention purge run inside the pinger service, or as its own systemd timer? Blocks: retention (item 3).
-- **Reboot trigger mechanism** *(deploy-stage)* — how does the unprivileged web app actually invoke `reboot`? Options include a narrowly-scoped passwordless sudo rule, or a small dedicated systemd unit the web app starts. Untestable on Crostini, so it can be deferred behind the reboot abstraction — but it must be decided before the first Pi deployment.
+- **Default ping target list** — is `8.8.8.8` / `1.1.1.1` / `google.com` the right default set? Blocks: config defaults (item 2). *[Resolved 2026-08-05: ship the three as documented. It is a config default, editable from the admin page.]*
+- **Web port and route structure** — default port 8080; is the config/admin page a separate route on the same Flask app, or a distinct app? Blocks: web milestone (items 7, 8). *[Resolved 2026-08-05: one Flask app on 8080, dashboard at `/` and admin at `/admin`.]*
+- **Purge job placement** — does the daily ping-retention purge run inside the pinger service, or as its own systemd timer? Blocks: retention (item 3). *[Resolved 2026-08-05: inside the pinger's existing loop as a daily check — one fewer unit to install and secure.]*
+- **Reboot trigger mechanism** *(deploy-stage)* — how does the unprivileged web app actually invoke `reboot`? Options include a narrowly-scoped passwordless sudo rule, or a small dedicated systemd unit the web app starts. Untestable on Crostini, so it can be deferred behind the reboot abstraction — but it must be decided before the first Pi deployment. *[Resolved 2026-08-05: both — a sudoers rule scoped to exactly `systemctl start bbmon-reboot.service`, with no wildcard and no argument the web app controls. Verified at gate G3.]*
