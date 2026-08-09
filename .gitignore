@@ -222,3 +222,7 @@ __marimo__/
 #   Shared project config is .claude/settings.json, which IS tracked.
 .claude/settings.local.json
 .claude/settings.local.json.tmp.*
+
+# bbmon
+#   Local dev config pointed at by BBMON_CONFIG; the deployed one lives in /etc.
+dev-config.yaml

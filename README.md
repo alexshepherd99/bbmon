@@ -8,7 +8,25 @@ LAN-only, no authentication, designed to run on low-end Pi hardware.
 
 ## Status
 
-Pre-implementation. Requirements are settled; no code yet.
+In development — phase 1, milestone M1 (walking skeleton).
+
+## Development
+
+Requires Python 3.11+. All development and unit testing happens on an ordinary
+Linux machine; no Raspberry Pi is needed.
+
+```sh
+python3 -m venv .venv
+.venv/bin/pip install -e '.[dev]'
+.venv/bin/python -m pytest
+```
+
+Services read their settings from `/etc/bbmon/config.yaml`. In development,
+point `BBMON_CONFIG` at a local file instead:
+
+```sh
+BBMON_CONFIG=dev-config.yaml .venv/bin/python -m bbmon.pinger
+```
 
 ## Documentation
 
