@@ -22,6 +22,10 @@ BBMON_CONFIG=dev-config.yaml .venv/bin/python -m bbmon.web
 then open <http://127.0.0.1:8080>. Results are buffered, so the first points
 appear about a minute after the pinger starts.
 
+To check a chart change without a browser, `tools/render-dashboard.js` renders
+the real dashboard headlessly and asserts it drew. It needs jsdom, installed
+outside this repo on purpose — see the file's header.
+
 ## Development
 
 Requires Python 3.11+. All development and unit testing happens on an ordinary
