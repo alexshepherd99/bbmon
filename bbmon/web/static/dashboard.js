@@ -5,6 +5,16 @@
 
 const POLL_INTERVAL_MS = 5000;
 
+// Slots 1-3 of a categorical palette stepped for a dark surface, kept in this
+// fixed order so a target always keeps its colour even when others drop out.
+// Validated for colour-vision deficiency separation against this background;
+// ECharts' own default palette is stepped for a light surface and leaves the
+// third series washed out here.
+const SERIES_COLOURS = ["#3987e5", "#d95926", "#199e70"];
+
+const AXIS_INK = "#8fa3b5";
+const GRID_INK = "#24303c";
+
 const chart = echarts.init(document.getElementById("latency-chart"), null, {
   renderer: "canvas",
 });
@@ -14,20 +24,26 @@ window.addEventListener("resize", () => chart.resize());
 
 function baseOptions() {
   return {
-    tooltip: { trigger: "axis" },
-    legend: { top: 0, textStyle: { color: "#8fa3b5" } },
+    color: SERIES_COLOURS,
+    tooltip: {
+      trigger: "axis",
+      axisPointer: { type: "cross", label: { backgroundColor: GRID_INK } },
+    },
+    // The legend carries identity, so the series are never told apart by
+    // colour alone.
+    legend: { top: 0, textStyle: { color: AXIS_INK } },
     grid: { left: 48, right: 16, top: 36, bottom: 32 },
     xAxis: {
       type: "time",
-      axisLine: { lineStyle: { color: "#24303c" } },
-      axisLabel: { color: "#8fa3b5" },
+      axisLine: { lineStyle: { color: GRID_INK } },
+      axisLabel: { color: AXIS_INK },
     },
     yAxis: {
       type: "value",
       name: "ms",
-      nameTextStyle: { color: "#8fa3b5" },
-      axisLabel: { color: "#8fa3b5" },
-      splitLine: { lineStyle: { color: "#24303c" } },
+      nameTextStyle: { color: AXIS_INK },
+      axisLabel: { color: AXIS_INK },
+      splitLine: { lineStyle: { color: GRID_INK } },
     },
   };
 }
@@ -39,6 +55,11 @@ function seriesFor(targets) {
       name: target,
       type: "line",
       showSymbol: false,
+      lineStyle: { width: 2 },
+      // Two hours at a five-second interval is ~1440 points per target;
+      // downsampling keeps the redraw cheap on a phone without changing the
+      // shape of the line.
+      sampling: "lttb",
       // A failed ping arrives as null, which leaves a visible gap rather than
       // a straight line drawn across the outage.
       connectNulls: false,
