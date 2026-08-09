@@ -19,5 +19,10 @@ dev = ["pytest>=8.0"]
 [tool.setuptools.packages.find]
 include = ["bbmon*"]
 
+# Templates and vendored assets are not .py files, so they need naming
+# explicitly or a non-editable install on the Pi ships a web app with no pages.
+[tool.setuptools.package-data]
+bbmon = ["web/templates/*.html", "web/static/*", "web/static/vendor/*"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]

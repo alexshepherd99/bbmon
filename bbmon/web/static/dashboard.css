@@ -1,0 +1,51 @@
+:root {
+  --bg: #10151c;
+  --card: #182029;
+  --text: #e7edf3;
+  --muted: #8fa3b5;
+  --line: #24303c;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  padding: 1rem;
+  background: var(--bg);
+  color: var(--text);
+  font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+}
+
+h1 { font-size: 1.4rem; margin: 0; }
+h2 { font-size: 1rem; margin: 0 0 0.75rem; font-weight: 600; color: var(--muted); }
+
+.status { margin: 0; color: var(--muted); font-size: 0.85rem; }
+.status.error { color: #ff8f8f; }
+
+.card {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 1rem;
+}
+
+/* Sized in vh so the chart stays usable on a phone held either way. */
+.chart {
+  width: 100%;
+  height: 55vh;
+  min-height: 260px;
+}
+
+footer {
+  margin-top: 1rem;
+  color: var(--muted);
+  font-size: 0.8rem;
+}

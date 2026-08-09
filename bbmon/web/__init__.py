@@ -1,0 +1,1 @@
+"""The bbmon web dashboard."""

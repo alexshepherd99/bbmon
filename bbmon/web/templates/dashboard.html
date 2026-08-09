@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>bbmon</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='dashboard.css') }}">
+</head>
+<body>
+  <header>
+    <h1>bbmon</h1>
+    <p class="status" id="status">Loading…</p>
+  </header>
+
+  <main>
+    <section class="card">
+      <h2>Ping latency &mdash; last 2 hours</h2>
+      <div id="latency-chart" class="chart"></div>
+    </section>
+  </main>
+
+  <footer>
+    <span>version {{ version }}</span>
+  </footer>
+
+  <script src="{{ url_for('static', filename='vendor/echarts.min.js') }}"></script>
+  <script src="{{ url_for('static', filename='dashboard.js') }}"></script>
+</body>
+</html>
