@@ -86,3 +86,5 @@ Deferred to `BACKLOG.md` as hardening rather than hole-closing: a host firewall 
 - **Crostini cannot currently resolve or reach the Pi** — the Chromebook itself sees `raspberrypi`, so the container is most likely not on the home network. To be diagnosed at the start of M2, not before; addressing is being handled outside this plan.
 - **`rsync` is not installed on the Crostini container** — one `apt install`, needed before `deploy.sh` is useful.
 - **Collector interface shape** stays provisionally settled at M1 and is only confirmed at M3, when a second, very differently-shaped collector uses it.
+- **The dashboard has never been opened in a browser.** M1's route, JSON contract and vendored asset are covered by tests, but the chart's rendering is unverified. Worth clearing at the next opportunity, and in any case covered by G1's "dashboard reachable from a phone on the LAN".
+- **A freshly started dashboard is blank for the first minute**, because nothing is written until the first 60s flush. Inherent to requirement 4's buffering; undecided whether an immediate first flush on startup is worth the one extra write per service start.

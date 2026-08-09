@@ -48,3 +48,29 @@ Next: M1.
 Standing decision for bbmon: **state the current truth directly and delete what it replaces.** The reasoning behind a change belongs in this log, which is append-only and is the right place to look for what was believed when.
 
 This diverges from the shared convention rather than reinterpreting it. Not yet proposed back to `agentic`.
+
+## 2026-08-09 — M1 built: the walking skeleton runs
+
+The vertical slice is complete and on `main` in seven commits: config → SQLite → pinger → a live latency chart in a browser. 92 tests, green. Verified by running the whole stack for 70s — 13 points per target served over HTTP while the pinger wrote, 42 rows on disk after the exit flush.
+
+Three decisions were taken before any code was written.
+
+**Packaging.** A `pyproject.toml` with an editable install, rather than a bare `requirements.txt`. Imports then resolve identically in development and from a non-editable install on the Pi, so no service depends on being started from the right directory.
+
+**Charting library: Apache ECharts, not Chart.js.** The first recommendation was uPlot, argued from bundle size on low-spec hardware. That argument was wrong and was withdrawn: the chart renders in the browser on a phone or laptop, not on the Pi, so bundle size is close to irrelevant and the Pi-side cost is the SQL aggregation that M5 already addresses. Re-decided on the real discriminator, requirement 7's hourly box plot. Chart.js is unambiguously the standard core (12.6M weekly downloads, 67.6k stars) but has no box plot; that would have rested on a 136-star single-maintainer plugin with a 2-star statistics dependency inlined into it, untouched for ten months. ECharts has `boxplot` as a native series type from one Apache-governed project with no plugin at all, and is committed to weekly. Vendoring also reshapes the security question: with no `npm install` on the Pi, no post-install scripts and no CDN, the risk is a one-time "is this copy clean?" review rather than an ongoing trust relationship, so the bundle's provenance and SHA-256 are recorded next to it.
+
+**Development paths.** One environment variable, `BBMON_CONFIG`, selects the settings file; everything else including the database location is an ordinary field inside it. Noted at the time: M6's admin form must not render `database.path`, since pointing a running service at a different database from a web page is a good way to appear to have lost all the data.
+
+Three findings came out of the work itself, each from checking rather than assuming.
+
+**A test that passed for the wrong reason.** The `yaml.safe_load` test asserted only that `ConfigError` is raised. Mutating the loader to `yaml.unsafe_load` left it passing — while the payload actually executed and created its marker file. The exploit ran, the resulting value then failed validation, and the assertion was satisfied on the way past. It now asserts the side effect never happened. Worth remembering as a shape: a test that asserts "an error was raised" proves nothing about *which* error, or about what happened before it.
+
+**Buffered data was lost on every stop.** Running the pinger for real, then stopping it, wrote nothing. systemd stops services with SIGTERM, which by default kills the process outright, so the `finally` flush never ran and up to a minute of pings went with it — on every stop, and M2's `deploy.sh` restarts services on each deploy. Now handled into an event that ends the loop normally; the inter-cycle sleep is that event's wait, so a stop is not left waiting out the ping interval. This was invisible to the unit tests and only surfaced by running the thing.
+
+**Two guards that mutation showed were not doing what they appeared to.** `PRAGMA busy_timeout` was the same value `sqlite3.connect(timeout=)` already sets, written twice — removed. Removing `ORDER BY` changed no test result either, because the range scan uses the timestamp index and happens to return sorted rows; that makes the ordering incidental to the query plan rather than guaranteed, so it stays, and the test was instead shown to have teeth by flipping it to `DESC`.
+
+Not verified: no browser has loaded the dashboard page. The route, the JSON contract and the vendored asset are all covered by tests, but the chart's actual rendering is unconfirmed.
+
+Observed and left as a question rather than decided: with a 60s flush interval, a freshly started dashboard shows nothing for the first minute, including after every deploy.
+
+Next: M2 — Pi bootstrap and the deploy loop, starting with the Crostini-cannot-reach-the-Pi diagnosis deferred from the replan.

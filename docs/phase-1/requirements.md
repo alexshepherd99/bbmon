@@ -53,7 +53,14 @@ A shared Python package (e.g. `bbmon/`) holds common code: config loader, DB acc
   - `speedtest.interval_hours` (default 3)
   - `reboot.interval_days` (default 3)
   - `retention.ping_days` (default 30)
+  - `web.host` (default `127.0.0.1`) — the address the web app binds to, stated
+    explicitly rather than left to a framework default; the Pi's deployed config
+    sets `0.0.0.0` so the dashboard is reachable from the LAN
   - `web.port` (default 8080)
+  - `database.path` (default `/var/lib/bbmon/bbmon.db`)
+- The file's own location comes from the `BBMON_CONFIG` environment variable,
+  falling back to `/etc/bbmon/config.yaml`. That single override is what lets a
+  development machine run every service without writing to `/etc` or `/var/lib`
 - Config page validates values on save (positive intervals, valid hostnames/IPs for ping targets) and rejects bad input with a clear error rather than letting a bad config crash a service on reload
 
 ## 3. Data Storage

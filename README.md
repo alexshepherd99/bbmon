@@ -8,7 +8,19 @@ LAN-only, no authentication, designed to run on low-end Pi hardware.
 
 ## Status
 
-In development — phase 1, milestone M1 (walking skeleton).
+In development — phase 1. M1 (walking skeleton) is done: the pinger records
+latency to SQLite and the dashboard charts it live. Next is M2, the Pi
+bootstrap and deploy loop.
+
+Run it locally with two terminals:
+
+```sh
+BBMON_CONFIG=dev-config.yaml .venv/bin/python -m bbmon.pinger
+BBMON_CONFIG=dev-config.yaml .venv/bin/python -m bbmon.web
+```
+
+then open <http://127.0.0.1:8080>. Results are buffered, so the first points
+appear about a minute after the pinger starts.
 
 ## Development
 
