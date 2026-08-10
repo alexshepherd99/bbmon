@@ -21,6 +21,10 @@ This repo pulls in reusable agents, skills, and conventions from the
 See its `learning/CONVENTIONS.md` for settled decisions and
 `skills/`/`agents/` for what's available.
 
+Start sessions with `./claude.sh` — it mounts `agentic` so the skills
+below actually load. If `how-we-work` is not in your available skills,
+this session was started without it: say so and ask to relaunch.
+
 Apply these shared skills as a matter of course:
 - **`how-we-work`** — the working discipline for any task; consult it at
   the very start of a piece of work, before planning or code.
