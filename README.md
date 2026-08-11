@@ -22,6 +22,12 @@ BBMON_CONFIG=dev-config.yaml .venv/bin/python -m bbmon.web
 then open <http://127.0.0.1:8080>. Results are buffered, so the first points
 appear about a minute after the pinger starts.
 
+To view the dashboard from the ChromeOS browser under Crostini, set
+`web.host` to `0.0.0.0` in `dev-config.yaml` and open
+<http://penguin.linux.test:8080>. The container is a separate VM, so its
+loopback is not the browser's; binding all interfaces exposes the dashboard
+to the Chromebook only, as the Crostini subnet is host-only.
+
 To check a chart change without a browser, `tools/render-dashboard.js` renders
 the real dashboard headlessly and asserts it drew. It needs jsdom, installed
 outside this repo on purpose — see the file's header.
