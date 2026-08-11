@@ -83,7 +83,7 @@ A shared Python package (e.g. `bbmon/`) holds common code: config loader, DB acc
 ## 5. Speed Test
 
 - Runs on startup, then every `speedtest.interval_hours`
-- Tool: **speedtest-cli** (open-source Python library) — no manual confirmation prompts, scriptable
+- Tool: the **official Ookla Speedtest CLI** — a single static binary invoked as a subprocess with an argv list and `--format=json`, not a Python library, so it adds no dependency to the `bbmon` package itself. Installed by `bootstrap.sh` from Ookla's architecture-specific tarball; its licence and GDPR prompts are accepted non-interactively so nothing blocks on a prompt
 - Records download/upload/ping plus server/ISP metadata
 - If the test fails (e.g. network down), records a failed/error row rather than silently skipping, so dashboard gaps are unambiguous
 - Skips/delays if a reboot is imminently due, to avoid the two overlapping

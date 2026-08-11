@@ -74,3 +74,17 @@ Not verified: no browser has loaded the dashboard page. The route, the JSON cont
 Observed and left as a question rather than decided: with a 60s flush interval, a freshly started dashboard shows nothing for the first minute, including after every deploy.
 
 Next: M2 — Pi bootstrap and the deploy loop, starting with the Crostini-cannot-reach-the-Pi diagnosis deferred from the replan.
+
+## 2026-08-11 — Requirement 5's speed test tool replaced
+
+`speedtest-cli`, named as the tool in requirement 5 since the original requirements were written, is no longer usable. Its repository was archived read-only on 2026-01-21; its last release is 2.1.3 from April 2021, documented as supporting "Python 2.4–3.7" against a project that requires 3.11+; and it is reported to hang against Ookla's current backend. The requirement was written before any of that was true and was carried forward unexamined — it was re-checked only because M3 was about to depend on it.
+
+Replaced with the **official Ookla Speedtest CLI**, chosen over the open-source `librespeed-cli` because its figures come from the speedtest.net server network and are therefore the ones an ISP will recognise, which is the point of measuring at all. The cost is accepted knowingly: a proprietary closed-source binary on the Pi, an EULA and GDPR acceptance, and results transiting Ookla.
+
+The replacement improves the dependency position rather than worsening it. Both candidates are command-line binaries rather than Python libraries, so the collector shells out with an argv list and parses `--format=json` — the same shape `PingCollector` already uses for `ping`, and already sanctioned by this plan's decision to prefer the system binary. `bbmon`'s Python dependencies stay PyYAML and Flask; nothing is added to `pyproject.toml`. The new dependency is an external binary installed by `bootstrap.sh`, which is a different kind of risk, not a larger one — no dependency tree, no package manager, and a version we pin ourselves.
+
+Hardware confirmed as a **Pi 3 Model B** (ARMv8 Cortex-A53). Ookla publishes `armel`, `armhf` and `aarch64` builds, so every plausible Raspberry Pi OS bitness is covered; which one this Pi needs is read from `uname -m` at bootstrap rather than assumed, and is confirmed at G1. Ookla's apt repository is 64-bit only, so the tarball is the install route regardless.
+
+Deploying to x86 in future was raised and deliberately not designed for now. Recorded in `BACKLOG.md` instead, with the finding that it is verification rather than a port: the tarball architecture string is the only architecture-coupled thing in the system.
+
+Next: M3 — the speed test collector, pulled ahead of M2. Its stated dependency is M1, not M2, and `speedtest_results` already exists in the schema at version 1, so nothing is out of order. G2 still needs a deployable Pi and therefore trails M2; because gates are cleared in batches at home, running M3 first means G1 and G2 clear on one visit rather than two.
