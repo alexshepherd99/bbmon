@@ -10,8 +10,8 @@ A headless Python application that runs on a Raspberry Pi, starting automaticall
 
 ### Target (deployment)
 
-- Raspberry Pi OS Lite (Bookworm), Python 3.11+
-- Old or low-end Pi hardware (e.g. Pi 3-class or a Pi Zero/Zero 2 W) — not a Pi 4/5
+- Raspberry Pi OS Lite (Bookworm) **64-bit**, Python 3.11+
+- The target is a **Raspberry Pi 3 Model B** (ARMv8 Cortex-A53, 1 GB RAM), confirmed 2026-08-11 — low-end hardware by design, not a Pi 4/5. The low-spec constraints below are written against this machine; `uname -m` reports `aarch64`, which is what selects the Ookla Speedtest CLI build
 - Network connectivity via either wired LAN or WiFi (not assumed to be wired-only)
 - Single Pi, LAN-only access (no internet-facing exposure), fully headless — no display/monitor attached
 - systemd available for service management
