@@ -8,9 +8,27 @@ LAN-only, no authentication, designed to run on low-end Pi hardware.
 
 ## Status
 
-In development — phase 1. M1 (walking skeleton) is done: the pinger records
-latency to SQLite and the dashboard charts it live. Next is M2, the Pi
-bootstrap and deploy loop.
+In development — phase 1. The pinger and speed test record to SQLite and the
+dashboard charts them live (M1, M3), and the Pi bootstrap and deploy scripts
+are written (M2) but have not yet run on hardware. Next is gate G1, the first
+real deploy.
+
+## Deploying to a Pi
+
+Set the Pi up once, then use one of the two deploy paths. See
+[`docs/pi-access.md`](docs/pi-access.md) for SSH key setup first.
+
+```sh
+# On the Pi, once:
+sudo git clone https://github.com/alexshepherd99/bbmon /opt/bbmon
+sudo /opt/bbmon/scripts/bootstrap.sh
+
+# From here, during development — pushes the working tree, no commit needed:
+scripts/deploy.sh
+
+# On the Pi, to update from committed code:
+sudo /opt/bbmon/scripts/update.sh
+```
 
 Run it locally with two terminals:
 

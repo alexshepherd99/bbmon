@@ -226,6 +226,10 @@ __marimo__/
 # bbmon
 #   Local dev config pointed at by BBMON_CONFIG; the deployed one lives in /etc.
 dev-config.yaml
+#   Machine- and network-specific notes: addresses, host key fingerprints, and
+#   anything else identifying one particular Pi or LAN. These are deliberately
+#   kept out of git entirely — see docs/pi-access.md. Losing them is accepted.
+*.local.md
 #   This project has no package.json by design — see tools/render-dashboard.js.
 #   Ignored anyway, so an ad-hoc install here can never be committed.
 node_modules/
