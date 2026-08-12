@@ -10,8 +10,8 @@ A headless Python application that runs on a Raspberry Pi, starting automaticall
 
 ### Target (deployment)
 
-- Raspberry Pi OS Lite (Bookworm) **64-bit**, Python 3.11+
-- The target is a **Raspberry Pi 3 Model B** (ARMv8 Cortex-A53, 1 GB RAM), confirmed 2026-08-11 — low-end hardware by design, not a Pi 4/5. The low-spec constraints below are written against this machine; `uname -m` reports `aarch64`, which is what selects the Ookla Speedtest CLI build
+- Raspberry Pi OS Lite **64-bit**, based on **Debian 13 (trixie)**, with **Python 3.13.5** — read off the machine at gate G1 on 2026-08-12. This corrects an earlier assumption of Bookworm and "Python 3.11+", which was never checked against the hardware. `requires-python = ">=3.11"` is satisfied either way, so nothing depended on the wrong value, but the PEP 668 externally-managed-environment behaviour that `bootstrap.sh`'s virtualenv works around belongs to this line of Debian too
+- The target is a **Raspberry Pi 3 Model B** (ARMv8 Cortex-A53, 1 GB RAM — 905 MB usable, measured at G1), confirmed 2026-08-11 — low-end hardware by design, not a Pi 4/5. The low-spec constraints below are written against this machine; `uname -m` reports `aarch64`, confirmed at G1, which is what selects the Ookla Speedtest CLI build
 - Network connectivity via either wired LAN or WiFi (not assumed to be wired-only)
 - Single Pi, LAN-only access (no internet-facing exposure), fully headless — no display/monitor attached
 - systemd available for service management

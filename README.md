@@ -9,9 +9,9 @@ LAN-only, no authentication, designed to run on low-end Pi hardware.
 ## Status
 
 In development — phase 1. The pinger and speed test record to SQLite and the
-dashboard charts them live (M1, M3), and the Pi bootstrap and deploy scripts
-are written (M2) but have not yet run on hardware. Next is gate G1, the first
-real deploy.
+dashboard charts them live (M1, M3), and the whole system now runs on the Pi
+under systemd via the bootstrap and deploy scripts (M2, gate G1 cleared
+2026-08-12). Next is M4, restarts and the reboot mechanism.
 
 ## Deploying to a Pi
 

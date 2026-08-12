@@ -172,3 +172,31 @@ None of these tests could be observed red for the right reason first: the units 
 `shellcheck` and `rsync` were installed on the container to do this work; `rsync` was already noted in the plan as needed before `deploy.sh` was useful.
 
 Next: G1 — the first real deploy, which is the first time any of M2 will have executed. After that, M4.
+
+## 2026-08-12 — G1 cleared, and it found four defects
+
+The Pi was bootstrapped from a clean state and everything M2 built ran on hardware for the first time. **G1 is cleared** apart from the phone check, which needs a phone and moves to G4. What follows is mostly a list of things that were wrong, because that is what the gate was for.
+
+**The system works.** All four units come up and run as `bbmon`; 180 ping rows across the three targets with **zero failures**; three real speed tests with plausible figures and populated ISP and server fields; schema at version 1; the dashboard and both API endpoints serve real data to another host on the LAN. `systemctl show` confirms `NoNewPrivileges=yes`, `ProtectSystem=strict`, `ProtectHome=yes`, `PrivateTmp=yes` and an empty `CapabilityBoundingSet` are genuinely in force, not merely written down.
+
+Two things that were reasoned about in the abstract at M2 turned out right on hardware. **Unprivileged ICMP works under the sandbox** — zero ping failures is the proof, and it is the concern that drove the whole `ping_group_range` investigation. And the **Ookla CLI tolerates `ProtectHome=yes`**: it wrote `/var/lib/bbmon/.config/ookla/speedtest-cli.json` without complaint, because the service user's home was deliberately put outside `/home`.
+
+**Four defects, none of which the unit tests could have found.**
+
+*`bootstrap.sh` would have narrowed `net.ipv4.ping_group_range` system-wide.* Caught before running it, by reading the setting off the Pi rather than trusting the comment sitting next to the code. That comment asserted the range is empty on a stock Raspberry Pi OS; it actually ships wide open at `0 2147483647`. Writing a bare `$gid $gid` would have revoked unprivileged ICMP from every other account on the machine as a silent side effect of installing a monitoring tool. `ping_group_range_for` now only ever widens, and on this Pi correctly wrote nothing at all. The lesson is narrow and repeatable: the assumption was in a *comment*, and comments are not checked by anything.
+
+*`bootstrap.sh` exited non-zero after succeeding.* `trap 'rm -rf "$tmp"' RETURN` on a function-local — bash installs RETURN traps globally rather than scoping them to the function, so it fired again when `main` returned, by which point `$tmp` was gone and `set -u` made cleanup an error. The script printed its entire success summary and then failed. It only did this on a *first* run, since a re-run skips the download branch and never sets the trap — so the broken case was exactly the first-time setup the script exists for, and the case a re-run cannot reveal.
+
+*`deploy.sh` restarted everything on every deploy.* Its itemize filter treated `.` as a change. In `rsync --itemize-changes` the leading character is the update type and `.` means *no* update occurred — only attributes such as mtime were reconciled. Since `rsync -a` syncs mtimes and a fresh clone has clone-time mtimes throughout, every identical file itemised as changed. The whole "restart only what is affected" mechanism was therefore dead on arrival, and it announced its own success while being dead. After the fix, an unchanged tree restarts nothing and a change confined to `bbmon/web/app.py` restarts `bbmon-web` alone — confirmed by watching the other two services' `ActiveEnterTimestamp` stay put.
+
+*Disabling password authentication did nothing.* The drop-in was installed as `60-bbmon-no-passwords.conf` and `sshd -T` still reported `passwordauthentication yes`. `sshd` takes the **first** value obtained for a keyword rather than the last, and Raspberry Pi OS ships `50-cloud-init.conf` setting it to `yes`, which sorts earlier and wins. Renumbering to `10-` fixed it. This is the most dangerous of the four, because the file sat there looking exactly right: the only thing separating "hardened" from "believed to be hardened" was running the verification step. `KbdInteractiveAuthentication` *had* applied, which made it look partially effective.
+
+The change was made behind a `systemd-run --on-active=300` dead-man revert, disarmed only after key login was proven from a fresh connection. Recommended in `docs/pi-access.md` now — locking oneself out of a headless Pi costs a keyboard, a monitor and a disassembly.
+
+**Two smaller findings.** Raspberry Pi OS Lite has no `git`, so the documented first step failed and, worse, a Pi bootstrapped without it would have run fine with `update.sh` permanently broken; `git` joins the apt list. And the Pi is running **Debian 13 (trixie) with Python 3.13.5**, not the Bookworm and "Python 3.11+" that `requirements.md` had asserted since before any hardware was examined — nothing depended on the wrong value, but it is now read off the machine rather than assumed.
+
+**On the shape of all this.** Every one of the four defects is quiet: in each case the thing reports success while not working. That is the same shape as M3's unrun Ookla binary and M1's flush-on-shutdown loss, and it is now three milestones in a row where the defects were found by execution and were invisible to review and to unit tests. The tests added here are the ones that did not need a Pi — `ping_group_range_for` and `changed_paths_from_itemize` are both pure functions once extracted, and both are now covered, including a property test asserting the ping range never narrows. 193 tests, green.
+
+**Not verified.** `update.sh` has still never run; the mobile layout has never been seen on a phone. Both carried to G4. Throughput figures from the Pi differ markedly from Crostini's, which is expected — G2 is where speed test numbers are actually assessed.
+
+Next: M4 — restarts and the reboot mechanism.

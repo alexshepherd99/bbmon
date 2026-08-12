@@ -90,15 +90,35 @@ the key turns out not to work, that open session is the only way back in
 without a keyboard and monitor.
 
 ```sh
-sudo tee /etc/ssh/sshd_config.d/60-bbmon-no-passwords.conf >/dev/null <<'EOF'
+sudo tee /etc/ssh/sshd_config.d/10-bbmon-no-passwords.conf >/dev/null <<'EOF'
 PasswordAuthentication no
 KbdInteractiveAuthentication no
 EOF
 sudo sshd -t && sudo systemctl restart ssh
 ```
 
+**The `10-` prefix is load-bearing, not decoration.** `sshd` takes the *first*
+value it obtains for a keyword, not the last — the opposite of most config
+systems. Raspberry Pi OS ships `/etc/ssh/sshd_config.d/50-cloud-init.conf`
+containing `PasswordAuthentication yes`, so a drop-in numbered above 50 is read
+second and silently loses. This was written as `60-` first and had no effect at
+all: `sshd -T` still reported `passwordauthentication yes` while the file sat
+there looking correct.
+
 `sshd -t` validates the configuration before the restart applies it. If it
 reports an error, fix it before restarting, or the Pi will be left unreachable.
+
+Consider arming an automatic revert first, so a mistake repairs itself rather
+than needing a keyboard and monitor attached to a headless Pi:
+
+```sh
+# Undoes the change in 5 minutes unless you disarm it.
+sudo systemd-run --on-active=300 --unit=ssh-failsafe \
+  /bin/sh -c "rm -f /etc/ssh/sshd_config.d/10-bbmon-no-passwords.conf; systemctl restart ssh"
+
+# ...verify from a NEW terminal, then disarm:
+sudo systemctl stop ssh-failsafe.timer
+```
 
 **7. Verify it took.** From a *new* terminal:
 
@@ -112,11 +132,18 @@ This must be refused. If it asks for a password, step 6 did not take effect.
 
 ```sh
 # Which authentication methods does the Pi offer?
-ssh -o PreferredAuthentications=none pi@<host> 2>&1 | grep -i 'permission denied'
+ssh -o PreferredAuthentications=none -o PubkeyAuthentication=no pi@<host> 2>&1 \
+  | grep -i 'permission denied'
 ```
 
 The listed methods should be `publickey` alone. While `password` still appears
-there, step 6 has not been done.
+there, step 6 has not taken effect — regardless of what the drop-in file says.
+
+Ask the Pi what it actually resolved, which is the answer that counts:
+
+```sh
+sudo sshd -T | grep -iE '^(passwordauthentication|kbdinteractiveauthentication)'
+```
 
 ## When the address moves
 
