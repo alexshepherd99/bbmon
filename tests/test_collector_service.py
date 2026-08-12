@@ -1,17 +1,20 @@
-"""Tests for the pinger service loop and its buffered write path."""
+"""Tests for the shared collector service loop and its buffered write path."""
 
+import os
+import signal
 import sqlite3
 import threading
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Sequence
+from typing import Iterator, Sequence
 
 import pytest
 
 from bbmon import db
+from bbmon.collectors.base import CollectorError
 from bbmon.db import DatabaseError
 from bbmon.models import PingResult
-from bbmon.pinger import PingerService
+from bbmon.service import CollectorService, run_until_stopped
 
 START = datetime(2026, 8, 9, 12, 0, 0, tzinfo=timezone.utc)
 
@@ -83,8 +86,8 @@ def stop_after(cycles: int):
 
 def service(
     database: Path, collector: FakeCollector, clock: FakeClock, flush: int = 60
-) -> PingerService:
-    return PingerService(
+) -> CollectorService:
+    return CollectorService(
         collector=collector,
         database_path=database,
         flush_interval_seconds=flush,
@@ -187,7 +190,7 @@ def test_a_stop_requested_mid_sleep_ends_the_loop_and_still_flushes(
     stopping = threading.Event()
     collector = FakeCollector(interval_seconds=5)
 
-    subject = PingerService(
+    subject = CollectorService(
         collector=collector,
         database_path=database,
         flush_interval_seconds=3600,
@@ -207,3 +210,78 @@ def test_the_loop_sleeps_for_the_collector_interval(database: Path) -> None:
     service(database, collector, clock).run(stop_after(3))
 
     assert clock.seconds == 21
+
+
+@pytest.fixture
+def restore_signal_handlers() -> Iterator[None]:
+    """run_until_stopped installs process-wide handlers; put them back after."""
+    previous = {
+        number: signal.getsignal(number)
+        for number in (signal.SIGTERM, signal.SIGINT)
+    }
+    yield
+    for number, handler in previous.items():
+        signal.signal(number, handler)
+
+
+class SelfStoppingCollector(FakeCollector):
+    """Signals the process mid-cycle, the way systemd stops a real service."""
+
+    def __init__(self, signal_number: int) -> None:
+        super().__init__(interval_seconds=5)
+        self._signal_number = signal_number
+
+    def collect(self) -> list[PingResult]:
+        results = super().collect()
+        os.kill(os.getpid(), self._signal_number)
+        return results
+
+
+class UnrunnableCollector(FakeCollector):
+    """A collector whose tool is missing, so it will not recover next cycle."""
+
+    def collect(self) -> list[PingResult]:
+        raise CollectorError("the measurement binary is not installed")
+
+
+@pytest.mark.parametrize("signal_number", [signal.SIGTERM, signal.SIGINT])
+def test_a_signal_stops_the_loop_and_still_writes_what_was_buffered(
+    database: Path, restore_signal_handlers: None, signal_number: int
+) -> None:
+    """The M1 data-loss bug: SIGTERM killed the process before the flush ran.
+
+    Buffering is set to an hour so nothing would be written by the ordinary
+    flush path — the row can only be on disk because the shutdown flushed it.
+    """
+    collector = SelfStoppingCollector(signal_number)
+
+    exit_code = run_until_stopped(
+        collector, database, flush_interval_seconds=3600
+    )
+
+    assert exit_code == 0
+    assert collector.cycles == 1
+    assert row_count(database) == 1
+
+
+def test_a_collector_that_cannot_run_at_all_exits_non_zero(
+    database: Path, restore_signal_handlers: None
+) -> None:
+    """systemd's Restart=on-failure needs a failed start to look like one."""
+    exit_code = run_until_stopped(UnrunnableCollector(), database)
+
+    assert exit_code == 1
+
+
+def test_flushing_every_cycle_writes_without_waiting_for_an_interval(
+    database: Path,
+) -> None:
+    """What the speed test uses: one row every few hours, held in memory for none of it."""
+    clock = FakeClock()
+    collector = FakeCollector(interval_seconds=5)
+
+    service(database, collector, clock, flush=0).run(
+        stop_after(3), flush_on_exit=False
+    )
+
+    assert row_count(database) == 3
