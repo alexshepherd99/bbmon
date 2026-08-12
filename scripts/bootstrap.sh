@@ -42,7 +42,10 @@ declare -A OOKLA_SHA256=(
   [i386]=9ff7e18dbae7ee0e03c66108445a2fb6ceea6c86f66482e1392f55881b772fe8
 )
 
-APT_PACKAGES=(python3 python3-venv python3-pip iputils-ping rsync curl ca-certificates)
+# git is here for scripts/update.sh, which needs a working checkout to pull
+# into. Raspberry Pi OS Lite does not ship it, so without this the update path
+# would fail on a machine that had been bootstrapped successfully.
+APT_PACKAGES=(python3 python3-venv python3-pip iputils-ping rsync curl ca-certificates git)
 
 UNITS=(bbmon-init.service bbmon-pinger.service bbmon-speedtest.service bbmon-web.service)
 

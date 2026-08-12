@@ -19,7 +19,9 @@ Set the Pi up once, then use one of the two deploy paths. See
 [`docs/pi-access.md`](docs/pi-access.md) for SSH key setup first.
 
 ```sh
-# On the Pi, once:
+# On the Pi, once. Raspberry Pi OS Lite ships without git, so it comes first;
+# bootstrap.sh installs it again anyway, because update.sh needs a checkout.
+sudo apt install -y git
 sudo git clone https://github.com/alexshepherd99/bbmon /opt/bbmon
 sudo /opt/bbmon/scripts/bootstrap.sh
 
