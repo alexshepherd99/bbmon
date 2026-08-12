@@ -19,6 +19,15 @@ BBMON_CONFIG=dev-config.yaml .venv/bin/python -m bbmon.pinger
 BBMON_CONFIG=dev-config.yaml .venv/bin/python -m bbmon.web
 ```
 
+A third service runs the speed test. It needs the Ookla Speedtest CLI on
+`PATH`, which `bootstrap.sh` installs on the Pi but which is not part of the
+development setup — without it the service logs that the binary is missing and
+exits, and the dashboard's speed test panel simply stays empty:
+
+```sh
+BBMON_CONFIG=dev-config.yaml .venv/bin/python -m bbmon.speedtest
+```
+
 then open <http://127.0.0.1:8080>. Results are buffered, so the first points
 appear about a minute after the pinger starts.
 

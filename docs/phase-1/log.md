@@ -88,3 +88,28 @@ Hardware confirmed as a **Pi 3 Model B** (ARMv8 Cortex-A53). Ookla publishes `ar
 Deploying to x86 in future was raised and deliberately not designed for now. Recorded in `BACKLOG.md` instead, with the finding that it is verification rather than a port: the tarball architecture string is the only architecture-coupled thing in the system.
 
 Next: M3 — the speed test collector, pulled ahead of M2. Its stated dependency is M1, not M2, and `speedtest_results` already exists in the schema at version 1, so nothing is out of order. G2 still needs a deployable Pi and therefore trails M2; because gates are cleared in batches at home, running M3 first means G1 and G2 clear on one visit rather than two.
+
+## 2026-08-12 — M3 built: the speed test collector
+
+Five commits on `main`: model and storage, the collector, the shared service loop, the service entrypoint, the dashboard panel. 129 tests, green. No schema change was needed — M1 created all three tables up front, and that decision paid for itself here.
+
+**The collector interface survived unchanged.** This was M3's actual purpose, and the answer is that the abstraction held: `SpeedtestCollector` implements `name`, `interval_seconds`, `collect` and `store` with no additions. Three strains showed up and none of them justified changing it yet.
+
+- `collect()` returns a `Sequence` because a ping cycle measures several targets. A speed test returns a single-element list, which is slightly silly but costs nothing and keeps one shape for the service loop.
+- `interval_seconds` is an awkward name for something configured in hours. The conversion sits in the collector, so the loop stays in one unit.
+- Requirement 5's "skip if a reboot is imminently due" has nowhere to live on the interface. **This is not built** — it needs M4's reboot mechanism to exist before there is anything to ask. Carried to M4 rather than backlogged, since it is a phase-1 requirement.
+
+**What did need changing was the code around the interface, not the interface.** `PingerService` was already collector-agnostic and only its *name* was ping-specific; it moved to `bbmon.service` as `CollectorService`. The SIGTERM wiring moved with it into `run_until_stopped`, so the fix for M1's flush-on-shutdown data loss is inherited by every future service instead of being re-typed and possibly forgotten. Those two code paths had no tests before and now do.
+
+The speed test deliberately does **not** buffer. Buffering exists to spare the SD card thousands of small ping writes; one row every few hours held in memory for hours is just a row a crash loses.
+
+Two test defects were found by mutation rather than by review, both the same shape as M1's `ORDER BY` finding — a test passing through a path other than the one it names.
+
+- `latest_speedtest_result`'s ordering test inserted the newest row first, so natural row order already gave the right answer and dropping `ORDER BY timestamp DESC` left it green. Rewritten to insert the oldest last.
+- The non-zero-exit test passed empty output, so it was satisfied by the "no result object" branch and stayed green with the exit-code check replaced by `if False`. Rewritten to return a complete, parseable result alongside a non-zero exit, so only the exit code can catch it.
+
+**The headless render check earned its keep.** Adding the panel broke it immediately: the harness builds its own DOM, which lacked the new elements, so `dashboard.js` threw on a null. Fixing that exposed a second, subtler problem — the harness's placeholder text was the same string the page writes when no speed test has ever run, which made "the fetch has not returned" indistinguishable from "there is no data", and the panel was being read before it had loaded. It now uses a distinct sentinel and waits for both polls. The panel's success and failure renderings were then both confirmed against a running app.
+
+Not verified, and it is the main risk M3 carries into G2: **no real Ookla binary has ever been run.** Every test injects canned JSON, so the parsing is only as right as the assumed output shape. `--format=json`'s field names, the `bandwidth` unit, and whether progress objects share the stream are all assumptions until the binary runs. The parser deliberately locates the result object rather than assuming it stands alone, and treats an unrecognised shape as a recorded failure, so a wrong guess degrades to "failures recorded" instead of a crash loop — but it is still a guess.
+
+Next: M2 — Pi bootstrap and the deploy loop. Its open question is whether the Ookla CLI is installed from a pinned tarball or from Ookla's apt repository, now that 64-bit hardware makes the latter possible.
