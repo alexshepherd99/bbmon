@@ -1,0 +1,156 @@
+#!/usr/bin/env bash
+#
+# Push the local working tree to the Pi and restart what it affects.
+#
+#   scripts/deploy.sh              # deploy to $BBMON_HOST, default raspberrypi
+#   scripts/deploy.sh pi@1.2.3.4   # deploy somewhere else
+#   scripts/deploy.sh --dry-run    # show what would change, change nothing
+#
+# This is the development loop: it deliberately does NOT require a commit, so
+# testing a change on real hardware does not fill main with WIP. Use
+# scripts/update.sh for a proper deploy from committed code.
+#
+# Run scripts/bootstrap.sh on the Pi first — this script only moves code, it
+# does not create users, install dependencies, or install unit files.
+
+set -euo pipefail
+
+INSTALL_DIR=/opt/bbmon
+DEFAULT_HOST=raspberrypi
+
+# Never pushed: the venv is architecture-specific, .git belongs to the Pi's own
+# checkout (update.sh pulls into it), and var/ plus the caches are local junk.
+EXCLUDES=(
+  --exclude '.venv/'
+  --exclude '.git/'
+  --exclude '__pycache__/'
+  --exclude '*.pyc'
+  --exclude '.pytest_cache/'
+  --exclude 'build/'
+  --exclude '*.egg-info/'
+  --exclude 'var/'
+  --exclude 'node_modules/'
+  --exclude 'dev-config.yaml'
+)
+
+log() { printf '\n\033[1m==> %s\033[0m\n' "$*"; }
+note() { printf '    %s\n' "$*"; }
+die() { printf '\033[1;31mError: %s\033[0m\n' "$*" >&2; exit 1; }
+
+repo_root() { cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd; }
+
+# Maps a changed file to the services that need restarting. Shared modules
+# (config, db, models, service) are used by all three, so a change to one of
+# them restarts everything; a change confined to the web app or to a single
+# collector restarts only that service.
+services_for_path() {
+  case "$1" in
+    bbmon/web/*)                       echo "bbmon-web" ;;
+    bbmon/pinger.py|bbmon/collectors/ping.py)
+                                       echo "bbmon-pinger" ;;
+    bbmon/speedtest.py|bbmon/collectors/speedtest.py)
+                                       echo "bbmon-speedtest" ;;
+    bbmon/*)                           echo "bbmon-pinger bbmon-speedtest bbmon-web" ;;
+    *)                                 echo "" ;;
+  esac
+}
+
+main() {
+  local host="${BBMON_HOST:-$DEFAULT_HOST}"
+  local dry_run=0
+  local rsync_extra=()
+
+  for arg in "$@"; do
+    case "$arg" in
+      --dry-run) dry_run=1; rsync_extra+=(--dry-run) ;;
+      -*) die "unknown option $arg" ;;
+      *) host="$arg" ;;
+    esac
+  done
+
+  local root
+  root="$(repo_root)"
+
+  log "Deploying $root to $host:$INSTALL_DIR"
+  ssh -o BatchMode=yes -o ConnectTimeout=10 "$host" true \
+    || die "cannot reach $host over SSH without a password.
+    Check docs/pi-access.md — key-only access is set up there."
+
+  # --itemize-changes is what makes "restart only what changed" possible;
+  # without it rsync gives no machine-readable account of what it did.
+  local output
+  output="$(rsync -az --delete --itemize-changes "${EXCLUDES[@]}" "${rsync_extra[@]}" \
+    "$root/" "$host:$INSTALL_DIR/")"
+
+  local changed
+  changed="$(echo "$output" | awk '$1 ~ /^[<>ch.*]/ && NF > 1 {print $2}')"
+
+  if [[ -z "$changed" ]]; then
+    log "Nothing changed"
+    note "no files differ from $host, so no service was restarted"
+    return 0
+  fi
+
+  log "Changed files"
+  while read -r path; do note "$path"; done <<< "$changed"
+
+  if echo "$changed" | grep -q '^deploy/systemd/'; then
+    printf '\n\033[1;33m    Unit files changed. deploy.sh does not install them —\n'
+    printf '    run scripts/bootstrap.sh on %s to pick them up.\033[0m\n' "$host"
+  fi
+
+  if echo "$changed" | grep -q '^pyproject.toml$'; then
+    printf '\n\033[1;33m    pyproject.toml changed. If dependencies changed, run\n'
+    printf '    scripts/bootstrap.sh on %s — the editable install only tracks code.\033[0m\n' "$host"
+  fi
+
+  local restart=()
+  while read -r path; do
+    [[ -n "$path" ]] || continue
+    for service in $(services_for_path "$path"); do
+      # shellcheck disable=SC2076
+      [[ " ${restart[*]-} " == *" $service "* ]] || restart+=("$service")
+    done
+  done <<< "$changed"
+
+  if [[ ${#restart[@]} -eq 0 ]]; then
+    log "No service code changed"
+    note "nothing to restart"
+    return 0
+  fi
+
+  if [[ "$dry_run" -eq 1 ]]; then
+    log "Dry run"
+    note "would restart: ${restart[*]}"
+    return 0
+  fi
+
+  log "Restarting ${restart[*]}"
+  # Each collector flushes its buffer on SIGTERM, so a restart loses nothing.
+  #
+  # The service names expand locally before the remote shell sees them, which
+  # is intended. They are safe to expand because services_for_path only ever
+  # returns literals from its own case statement — nothing derived from a
+  # filename, an argument, or the config reaches this command line.
+  # shellcheck disable=SC2029
+  ssh "$host" "sudo systemctl restart ${restart[*]}"
+
+  for service in "${restart[@]}"; do
+    # shellcheck disable=SC2029  # literal service name, as above
+    if ssh "$host" "systemctl is-active --quiet $service"; then
+      note "$service is active"
+    else
+      printf '    \033[1;31m%s is NOT running\033[0m — ssh %s journalctl -u %s -n 50\n' \
+        "$service" "$host" "$service"
+      exit 1
+    fi
+  done
+
+  log "Deployed"
+}
+
+# Sourcing this file defines its functions without deploying anything, which is
+# how tests/test_deploy_script.py exercises services_for_path without a Pi.
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+  main "$@"
+fi

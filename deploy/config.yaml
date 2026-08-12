@@ -1,0 +1,35 @@
+# The default bbmon configuration, installed to /etc/bbmon/config.yaml by
+# scripts/bootstrap.sh. Editing this file in the repo does NOT change a Pi that
+# has already been bootstrapped — bootstrap.sh never overwrites an existing
+# /etc/bbmon/config.yaml, because that file is also what M6's admin page writes
+# back to and clobbering it would discard settings changed from the dashboard.
+#
+# Every value here is the documented default from requirements.md except
+# web.host, which differs deliberately — see below.
+
+ping:
+  interval_seconds: 5
+  targets:
+    - 8.8.8.8
+    - 1.1.1.1
+    - google.com
+
+speedtest:
+  interval_hours: 3
+
+reboot:
+  interval_days: 3
+
+retention:
+  ping_days: 30
+
+web:
+  # 0.0.0.0 rather than the 127.0.0.1 default: requirement 7 asks for a
+  # dashboard usable from a phone on the LAN, which loopback cannot serve.
+  # This is the one setting where the deployed config departs from the
+  # in-code default, and it is why the LAN is the trust boundary.
+  host: 0.0.0.0
+  port: 8080
+
+database:
+  path: /var/lib/bbmon/bbmon.db
