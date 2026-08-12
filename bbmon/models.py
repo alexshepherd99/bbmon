@@ -18,3 +18,25 @@ class PingResult:
     target: str
     latency_ms: float | None
     success: bool
+
+
+@dataclass(frozen=True)
+class SpeedtestResult:
+    """One completed speed test.
+
+    Like :class:`PingResult`, a failed run is recorded rather than dropped. All
+    six measurement fields are optional because a failure has none of them —
+    ``success`` is what says whether to trust the rest.
+
+    Throughput is stored in megabits per second, the unit an ISP advertises in.
+    The measurement tool reports bytes per second, so the conversion happens
+    once, in the collector, and never again downstream.
+    """
+
+    timestamp: datetime
+    download_mbps: float | None
+    upload_mbps: float | None
+    ping_ms: float | None
+    isp: str | None
+    server: str | None
+    success: bool

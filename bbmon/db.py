@@ -16,7 +16,7 @@ from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 
-from bbmon.models import PingResult
+from bbmon.models import PingResult, SpeedtestResult
 
 logger = logging.getLogger(__name__)
 
@@ -159,6 +159,73 @@ def insert_ping_results(
     except sqlite3.Error as error:
         logger.error("Could not write %d ping results: %s", len(results), error)
         raise DatabaseError(f"Could not write ping results: {error}")
+
+
+def insert_speedtest_results(
+    conn: sqlite3.Connection, results: Sequence[SpeedtestResult]
+) -> None:
+    """Write a batch of speed test results.
+
+    A batch, for symmetry with the ping path and the collector interface, though
+    a speed test produces one row every few hours rather than many per minute.
+    """
+    if not results:
+        return
+
+    try:
+        conn.executemany(
+            "INSERT INTO speedtest_results "
+            "(timestamp, download_mbps, upload_mbps, ping_ms, isp, server, success) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            [
+                (
+                    result.timestamp.isoformat(),
+                    result.download_mbps,
+                    result.upload_mbps,
+                    result.ping_ms,
+                    result.isp,
+                    result.server,
+                    int(result.success),
+                )
+                for result in results
+            ],
+        )
+        conn.commit()
+    except sqlite3.Error as error:
+        logger.error("Could not write %d speed test results: %s", len(results), error)
+        raise DatabaseError(f"Could not write speed test results: {error}")
+
+
+def latest_speedtest_result(conn: sqlite3.Connection) -> SpeedtestResult | None:
+    """Return the most recent speed test, or ``None`` if none has ever run.
+
+    "Most recent" is by timestamp rather than by insertion order, so a row
+    written out of order cannot leave an older result showing as current. A
+    failed run counts: the newest result is reported whether or not it worked,
+    otherwise a stale success would sit on the dashboard through an outage.
+    """
+    try:
+        row = conn.execute(
+            "SELECT timestamp, download_mbps, upload_mbps, ping_ms, isp, server, "
+            "success FROM speedtest_results ORDER BY timestamp DESC LIMIT 1"
+        ).fetchone()
+    except sqlite3.Error as error:
+        logger.error("Could not read the latest speed test result: %s", error)
+        raise DatabaseError(f"Could not read the latest speed test result: {error}")
+
+    if row is None:
+        return None
+
+    timestamp, download_mbps, upload_mbps, ping_ms, isp, server, success = row
+    return SpeedtestResult(
+        timestamp=datetime.fromisoformat(timestamp),
+        download_mbps=download_mbps,
+        upload_mbps=upload_mbps,
+        ping_ms=ping_ms,
+        isp=isp,
+        server=server,
+        success=bool(success),
+    )
 
 
 def recent_ping_results(
