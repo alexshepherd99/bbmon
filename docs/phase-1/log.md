@@ -113,3 +113,17 @@ Two test defects were found by mutation rather than by review, both the same sha
 Not verified, and it is the main risk M3 carries into G2: **no real Ookla binary has ever been run.** Every test injects canned JSON, so the parsing is only as right as the assumed output shape. `--format=json`'s field names, the `bandwidth` unit, and whether progress objects share the stream are all assumptions until the binary runs. The parser deliberately locates the result object rather than assuming it stands alone, and treats an unrecognised shape as a recorded failure, so a wrong guess degrades to "failures recorded" instead of a crash loop — but it is still a guess.
 
 Next: M2 — Pi bootstrap and the deploy loop. Its open question is whether the Ookla CLI is installed from a pinned tarball or from Ookla's apt repository, now that 64-bit hardware makes the latter possible.
+
+## 2026-08-12 — The Ookla CLI checked against the real binary
+
+M3's parsing was written against an assumed output shape, which was the largest risk it carried into G2 — a wrong guess would have cost a home visit to find. The binary was installed on the Crostini container instead (x86_64 tarball, into `~/.bbmon-tools/` alongside jsdom, deliberately not into the repo and not system-wide) and run for real.
+
+**Every field assumption held.** `type: "result"`, `ping.latency`, `download.bandwidth`, `upload.bandwidth`, `isp`, `server.name` and `server.location` are all present with the expected types, and `bandwidth` is indeed bytes per second. A real run through `SpeedtestCollector` produced plausible download, upload and latency figures, with the ISP and server-name fields populated as expected.
+
+Facts worth having recorded for M2 and G2:
+
+- **Version tested: 1.2.0.84**, a statically linked musl binary with no dependencies. The tarball's SHA-256 is `5690596c54ff9bed63fa3732f818a05dbc2db19ad36ed68f21ca5f64d5cfeeb7` — that is the x86_64 build, so the Pi's `aarch64` tarball needs its own checksum recorded at M2.
+- **`--format=json` emits exactly one line**, and the licence and GDPR banners go to **stderr**, so they cannot corrupt the JSON on stdout. The `--accept-license --accept-gdpr` flags work non-interactively on a first run, as intended.
+- **The binary writes `~/.config/ookla/speedtest-cli.json`.** With an unwritable home it logs `Failed to save settings` to stderr, exits 0 and still prints a complete result on stdout. This matters because M2's security posture commits to `ProtectHome=yes` on every unit: the speed test tolerates it, so that directive does not need relaxing. Worth re-confirming at G1 rather than assuming the Pi behaves identically.
+
+One real defect was found by the exercise, and not the one expected. The parser scanned stdout line by line, which cannot parse a pretty-printed object spread over several lines — that would have been recorded as a failed speed test rather than surfaced as a parsing problem, and only ever on the Pi. The whole of stdout is now tried first, with the line scan kept as a fallback. The assumption that was actually wrong was about *robustness*, not about the field names.
