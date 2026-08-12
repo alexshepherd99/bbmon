@@ -187,11 +187,47 @@ install_config() {
   fi
 }
 
+# Works out what net.ipv4.ping_group_range should become so that GID is inside
+# it, given the range currently in force. Prints nothing when GID is already
+# permitted and no change is needed.
+#
+# The rule is that this never *narrows* the existing range. Writing a bare
+# "$gid $gid" would be a system-wide revocation of unprivileged ICMP from every
+# other account, which is not bootstrap.sh's business — and is not theoretical:
+# Raspberry Pi OS ships this wide open at "0 2147483647", not empty as was
+# assumed when this was first written.
+#
+# A range is disabled by having its low bound above its high bound; the kernel
+# default for that state is "1 0".
+ping_group_range_for() {
+  local gid="$1" low="$2" high="$3"
+
+  if (( low <= gid && gid <= high )); then
+    return 0
+  fi
+  if (( low > high )); then
+    echo "$gid $gid"
+    return 0
+  fi
+  echo "$(( low < gid ? low : gid )) $(( high > gid ? high : gid ))"
+}
+
 allow_unprivileged_ping() {
   log "Allowing unprivileged ICMP for the $SERVICE_USER group"
   local gid
   gid="$(getent group "$SERVICE_USER" | cut -d: -f3)"
   [[ -n "$gid" ]] || die "could not determine the $SERVICE_USER group id"
+
+  local current low high wanted
+  current="$(cat /proc/sys/net/ipv4/ping_group_range)"
+  low="$(echo "$current" | awk '{print $1}')"
+  high="$(echo "$current" | awk '{print $2}')"
+  wanted="$(ping_group_range_for "$gid" "$low" "$high")"
+
+  if [[ -z "$wanted" ]]; then
+    note "group $gid is already within the current range ($low $high), leaving it alone"
+    return 0
+  fi
 
   # Why this is needed: NoNewPrivileges=yes in the units makes the kernel
   # ignore /usr/bin/ping's cap_net_raw file capability, so ping would fall back
@@ -200,14 +236,15 @@ allow_unprivileged_ping() {
   # socket, which needs no capability at all — so the sandbox stays intact and
   # the service still holds no CAP_NET_RAW, as plan.md decided it should not.
   #
-  # This replaces any previous value of the setting rather than adding to it;
-  # on a stock Raspberry Pi OS the range is empty, so nothing is being taken
-  # away. It is written as a single-group range on purpose.
   cat > /etc/sysctl.d/60-bbmon-ping.conf <<EOF
 # Installed by bbmon's scripts/bootstrap.sh. Lets the bbmon service group use
 # unprivileged ICMP datagram sockets, so the pinger works under
 # NoNewPrivileges=yes without being granted CAP_NET_RAW.
-net.ipv4.ping_group_range = $gid $gid
+#
+# Widened from "$low $high" to include group $gid. This never narrows the
+# range that was already in force — revoking unprivileged ICMP from other
+# accounts is not this installer's business.
+net.ipv4.ping_group_range = $wanted
 EOF
   sysctl -q --system
   note "net.ipv4.ping_group_range = $(cat /proc/sys/net/ipv4/ping_group_range)"
@@ -264,4 +301,8 @@ main() {
   fi
 }
 
-main "$@"
+# Sourcing defines the functions without installing anything, which is how
+# tests/test_bootstrap_script.py exercises ping_group_range_for without a Pi.
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+  main "$@"
+fi
