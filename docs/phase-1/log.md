@@ -127,3 +127,14 @@ Facts worth having recorded for M2 and G2:
 - **The binary writes `~/.config/ookla/speedtest-cli.json`.** With an unwritable home it logs `Failed to save settings` to stderr, exits 0 and still prints a complete result on stdout. This matters because M2's security posture commits to `ProtectHome=yes` on every unit: the speed test tolerates it, so that directive does not need relaxing. Worth re-confirming at G1 rather than assuming the Pi behaves identically.
 
 One real defect was found by the exercise, and not the one expected. The parser scanned stdout line by line, which cannot parse a pretty-printed object spread over several lines — that would have been recorded as a failed speed test rather than surfaced as a parsing problem, and only ever on the Pi. The whole of stdout is now tried first, with the line scan kept as a fallback. The assumption that was actually wrong was about *robustness*, not about the field names.
+
+## 2026-08-12 — The dashboard seen in a real browser for the first time
+
+All three services were run together against real data and the page was loaded from the Chromebook. Both panels drew correctly: a genuine speed test result with all three figures and the ISP name rendered, and the latency chart with three live series. This is the first time the canvas renderer and the poll timers have been exercised at all — jsdom covers neither, and its header has always said so.
+
+Two pieces of feedback, both deferred by agreement rather than acted on.
+
+- **A speed test history chart** is wanted. No new item was raised: requirement 7 already asks for it and `plan.md` already schedules it at M5, alongside the hourly box plot, the pre-aggregation and the short-lived cache both charts read through. Recorded here only so the request is not mistaken for something missing from the plan.
+- **The latency chart re-animates on every poll**, redrawing left to right over roughly a second, every five seconds. Added to "Open items" with the probable cause: `replaceMerge: ["series"]` makes ECharts treat each poll as new series and replay the entry animation. A display defect, not a data one.
+
+The three fake speed test rows seeded during the earlier headless verification were deleted before this run, so nothing shown was fabricated.
