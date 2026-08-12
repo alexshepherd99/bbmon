@@ -158,6 +158,17 @@ def test_the_result_is_found_even_when_progress_lines_precede_it() -> None:
     assert results[0].download_mbps == pytest.approx(48.5)
 
 
+def test_the_result_is_found_when_spread_over_several_lines() -> None:
+    """A pretty-printed object is not parseable one line at a time."""
+    pretty = json.dumps(json.loads(OOKLA_OUTPUT), indent=2)
+    assert "\n" in pretty
+
+    results = collector(runner_returning(pretty)).collect()
+
+    assert results[0].success is True
+    assert results[0].download_mbps == pytest.approx(48.5)
+
+
 def test_a_missing_binary_raises_rather_than_recording_a_failure() -> None:
     """Not a measurement failure: it will not recover on the next cycle."""
     runner = runner_raising(FileNotFoundError("speedtest"))

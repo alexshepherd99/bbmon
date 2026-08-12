@@ -174,11 +174,23 @@ class SpeedtestCollector(Collector):
 def _find_result_object(stdout: str) -> dict[str, Any] | None:
     """Locate Ookla's final result object in the command's output.
 
-    ``--format=json`` normally emits one object and nothing else, but the CLI
-    has historically also emitted progress objects line by line. Scanning for
-    the result rather than assuming it stands alone costs little and avoids a
-    parse failure that could only be diagnosed on the Pi.
+    Confirmed against Ookla 1.2.0.84: ``--format=json`` emits exactly one line
+    and sends its own log messages to stderr, so the common case is the whole
+    of stdout. Two fallbacks cover the rest — the object spread over several
+    lines, and a stream of progress objects with the result last — because
+    either would otherwise be recorded as a failed speed test rather than
+    diagnosed, and only on the Pi.
     """
+    whole = stdout.strip()
+    if whole:
+        try:
+            parsed = json.loads(whole)
+        except json.JSONDecodeError:
+            pass
+        else:
+            if isinstance(parsed, dict) and parsed.get("type") == "result":
+                return parsed
+
     candidates = []
     for line in stdout.splitlines():
         line = line.strip()
