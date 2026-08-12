@@ -1,0 +1,39 @@
+[Unit]
+Description=bbmon speed test
+Documentation=https://github.com/alexshepherd99/bbmon
+Requires=bbmon-init.service
+After=bbmon-init.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=bbmon
+Group=bbmon
+Environment=BBMON_CONFIG=/etc/bbmon/config.yaml
+ExecStart=/opt/bbmon/.venv/bin/python -m bbmon.speedtest
+
+Restart=on-failure
+RestartSec=5
+
+# A speed test in flight can take tens of seconds, and run_until_stopped only
+# sets its stop flag — the current cycle finishes first. Stopping the service
+# should not mean killing a test partway through.
+TimeoutStopSec=120
+
+StateDirectory=bbmon
+
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+CapabilityBoundingSet=
+
+# The Ookla CLI writes ~/.config/ookla/speedtest-cli.json. The bbmon user's
+# home is /var/lib/bbmon rather than somewhere under /home, so ProtectHome=yes
+# does not hide it and the binary can save its settings normally. It tolerates
+# an unwritable home anyway (logs to stderr, exits 0, still prints the result —
+# confirmed against the real binary on 2026-08-12), so this is about keeping
+# the logs quiet, not about making the speed test work.
+
+[Install]
+WantedBy=multi-user.target

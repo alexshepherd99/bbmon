@@ -1,0 +1,35 @@
+[Unit]
+Description=bbmon database initialisation
+Documentation=https://github.com/alexshepherd99/bbmon
+# Requirement 3: the schema exists before any service starts. Every other
+# bbmon unit is ordered After= this one and Requires= it, so a failure here
+# stops the others rather than letting three services race to create tables.
+After=local-fs.target
+Before=bbmon-pinger.service bbmon-speedtest.service bbmon-web.service
+
+[Service]
+Type=oneshot
+# The other units Requires= this one; without RemainAfterExit a completed
+# oneshot counts as inactive and they would drag it back up on every start.
+RemainAfterExit=yes
+User=bbmon
+Group=bbmon
+Environment=BBMON_CONFIG=/etc/bbmon/config.yaml
+ExecStart=/opt/bbmon/.venv/bin/python -m bbmon.init
+
+# StateDirectory creates /var/lib/bbmon with the right ownership on every
+# start and implicitly makes it the one writable path under ProtectSystem;
+# a separate ReadWritePaths= would be the same grant written twice.
+StateDirectory=bbmon
+
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+# The reboot mechanism aside (M4), no bbmon service needs any capability —
+# including CAP_NET_RAW, which the ping decision in plan.md deliberately
+# avoided needing. An empty bounding set is what holds that decision in place.
+CapabilityBoundingSet=
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,38 @@
+[Unit]
+Description=bbmon ping monitor
+Documentation=https://github.com/alexshepherd99/bbmon
+Requires=bbmon-init.service
+After=bbmon-init.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=bbmon
+Group=bbmon
+Environment=BBMON_CONFIG=/etc/bbmon/config.yaml
+ExecStart=/opt/bbmon/.venv/bin/python -m bbmon.pinger
+
+# Requirement 10: a crashed collector recovers on its own.
+Restart=on-failure
+RestartSec=5
+
+# SIGTERM is handled in bbmon.service.run_until_stopped so the buffer is
+# written on the way down; the default KillSignal is already SIGTERM, and
+# this timeout gives the final flush room to complete before SIGKILL.
+TimeoutStopSec=30
+
+StateDirectory=bbmon
+
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+# NoNewPrivileges=yes makes the kernel ignore /usr/bin/ping's cap_net_raw file
+# capability, so ping would fall back to a raw socket and fail with
+# "Operation not permitted". bootstrap.sh therefore puts the bbmon group inside
+# net.ipv4.ping_group_range, which lets ping use an unprivileged ICMP datagram
+# socket needing no capability at all. Verified on 2026-08-12 — see log.md.
+CapabilityBoundingSet=
+
+[Install]
+WantedBy=multi-user.target

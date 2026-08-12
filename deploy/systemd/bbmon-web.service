@@ -1,0 +1,30 @@
+[Unit]
+Description=bbmon web dashboard
+Documentation=https://github.com/alexshepherd99/bbmon
+Requires=bbmon-init.service
+After=bbmon-init.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=bbmon
+Group=bbmon
+Environment=BBMON_CONFIG=/etc/bbmon/config.yaml
+ExecStart=/opt/bbmon/.venv/bin/python -m bbmon.web
+
+Restart=on-failure
+RestartSec=5
+
+StateDirectory=bbmon
+
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+# The configured port is 8080, above 1024, so binding needs no capability.
+# If web.port is ever set below 1024 this unit will fail to bind rather than
+# quietly gaining a privilege.
+CapabilityBoundingSet=
+
+[Install]
+WantedBy=multi-user.target
