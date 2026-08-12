@@ -49,6 +49,16 @@ APT_PACKAGES=(python3 python3-venv python3-pip iputils-ping rsync curl ca-certif
 
 UNITS=(bbmon-init.service bbmon-pinger.service bbmon-speedtest.service bbmon-web.service)
 
+# Set when a temporary directory is in use; removed on exit however we leave,
+# including via die(). Empty rather than unset so `set -u` is satisfied before
+# anything assigns it.
+TMPDIR_TO_CLEAN=""
+cleanup() {
+  [[ -n "$TMPDIR_TO_CLEAN" ]] && rm -rf "$TMPDIR_TO_CLEAN"
+  return 0
+}
+trap cleanup EXIT
+
 log() { printf '\n\033[1m==> %s\033[0m\n' "$*"; }
 note() { printf '    %s\n' "$*"; }
 die() { printf '\033[1;31mError: %s\033[0m\n' "$*" >&2; exit 1; }
@@ -151,9 +161,14 @@ install_speedtest_cli() {
     return
   fi
 
-  local tmp
-  tmp="$(mktemp -d)"
-  trap 'rm -rf "$tmp"' RETURN
+  # A `trap ... RETURN` on a function-local was the obvious way to write this
+  # and was wrong: bash installs that trap globally rather than scoping it to
+  # this function, so it fires again when main returns — by which point the
+  # local is gone and `set -u` turns the cleanup into an "unbound variable"
+  # error. The whole script then exited non-zero after doing everything
+  # correctly, which only ever showed on a first run, the one run that matters.
+  TMPDIR_TO_CLEAN="$(mktemp -d)"
+  local tmp="$TMPDIR_TO_CLEAN"
 
   local url="https://install.speedtest.net/app/cli/ookla-speedtest-${OOKLA_VERSION}-linux-${arch}.tgz"
   note "downloading $url"
