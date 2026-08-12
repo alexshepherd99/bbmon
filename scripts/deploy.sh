@@ -39,6 +39,30 @@ die() { printf '\033[1;31mError: %s\033[0m\n' "$*" >&2; exit 1; }
 
 repo_root() { cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd; }
 
+# Reads rsync --itemize-changes output on stdin and prints the paths whose
+# *content* changed, one per line.
+#
+# The first character of an itemised line is the update type, and only some of
+# them mean the file's content moved:
+#
+#   <  >   transferred to/from the remote — real content change
+#   c      created locally (a new directory, a symlink)
+#   h      turned into a hard link
+#   .      NO update happened; only attributes such as mtime or permissions
+#   *      a message follows, e.g. "*deleting"
+#
+# Treating "." as a change is wrong and was the original bug: rsync -a syncs
+# mtimes, and a fresh git clone on the Pi has clone-time mtimes throughout, so
+# every identical file itemised as ".f..t......" and deploy.sh restarted all
+# three services on every deploy while reporting unit files as modified. That
+# silently defeated the entire point of working out which services to restart.
+changed_paths_from_itemize() {
+  awk '
+    $1 == "*deleting" && NF > 1 { print $2; next }
+    $1 ~ /^[<>ch]/ && NF > 1    { print $2 }
+  '
+}
+
 # Maps a changed file to the services that need restarting. Shared modules
 # (config, db, models, service) are used by all three, so a change to one of
 # them restarts everything; a change confined to the web app or to a single
@@ -83,7 +107,7 @@ main() {
     "$root/" "$host:$INSTALL_DIR/")"
 
   local changed
-  changed="$(echo "$output" | awk '$1 ~ /^[<>ch.*]/ && NF > 1 {print $2}')"
+  changed="$(echo "$output" | changed_paths_from_itemize)"
 
   if [[ -z "$changed" ]]; then
     log "Nothing changed"

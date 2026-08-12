@@ -91,3 +91,49 @@ def test_a_shared_module_restarts_everything(path: str) -> None:
 )
 def test_files_that_do_not_affect_a_running_service_restart_nothing(path: str) -> None:
     assert services_for(path) == set()
+
+
+def itemize(lines: str) -> list[str]:
+    """Run real rsync --itemize-changes output through the script's filter."""
+    result = subprocess.run(
+        ["bash", "-c", f'source "{DEPLOY_SCRIPT}"; changed_paths_from_itemize'],
+        input=lines,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return result.stdout.split()
+
+
+def test_attribute_only_lines_are_not_content_changes() -> None:
+    """The G1 bug: a fresh clone's mtimes made every identical file look changed.
+
+    A leading "." means rsync performed no update and only reconciled
+    attributes. Counting those restarted all three services on every deploy.
+    """
+    assert itemize(".f..t...... bbmon/db.py\n") == []
+    assert itemize(".f...p..... scripts/deploy.sh\n") == []
+    assert itemize(".d..t...... bbmon/web/\n") == []
+
+
+def test_transferred_files_are_content_changes() -> None:
+    assert itemize(">f.st...... bbmon/db.py\n") == ["bbmon/db.py"]
+    assert itemize(">f+++++++++ bbmon/init.py\n") == ["bbmon/init.py"]
+    assert itemize("cd+++++++++ bbmon/new/\n") == ["bbmon/new/"]
+
+
+def test_deletions_count_as_changes() -> None:
+    """--delete removing a module is exactly when a restart is needed."""
+    assert itemize("*deleting   bbmon/old.py\n") == ["bbmon/old.py"]
+
+
+def test_a_realistic_mixed_run_picks_out_only_the_real_changes() -> None:
+    output = (
+        ".d..t...... ./\n"
+        ".f..t...... README.md\n"
+        ">f.st...... bbmon/web/app.py\n"
+        ".f..t...... bbmon/db.py\n"
+        "*deleting   bbmon/web/static/old.js\n"
+        ".f...p..... scripts/deploy.sh\n"
+    )
+    assert itemize(output) == ["bbmon/web/app.py", "bbmon/web/static/old.js"]
