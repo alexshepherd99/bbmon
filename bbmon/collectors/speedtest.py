@@ -62,17 +62,20 @@ class SpeedtestCollector(Collector):
     def __init__(
         self,
         interval_hours: int,
-        runner: Runner = subprocess.run,
+        runner: Runner | None = None,
         clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
     ) -> None:
         """
         :param interval_hours: How often the speed test runs, from configuration.
         :param runner: Injection point for the subprocess call, so tests need
-            neither the network nor the Ookla binary.
+            neither the network nor the Ookla binary. Defaults to
+            ``subprocess.run``, looked up when the collector is built rather
+            than when this module is imported, so the boundary stays reachable
+            for a service assembled by :func:`bbmon.speedtest.main`.
         :param clock: Injection point for the current time.
         """
         self._interval_hours = interval_hours
-        self._runner = runner
+        self._runner = runner if runner is not None else subprocess.run
         self._clock = clock
 
     @property
