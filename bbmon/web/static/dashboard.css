@@ -37,6 +37,49 @@ h2 { font-size: 1rem; margin: 0 0 0.75rem; font-weight: 600; color: var(--muted)
   padding: 1rem;
 }
 
+/* Two cards stacked, so the speed test reads as its own block above the chart. */
+main {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+/* Wraps to one reading per row on a narrow phone rather than shrinking the
+   numbers, which are the whole point of the panel. */
+.readings {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1.5rem;
+}
+
+.reading {
+  display: flex;
+  align-items: baseline;
+  gap: 0.35rem;
+}
+
+.reading-label {
+  color: var(--muted);
+  font-size: 0.85rem;
+  min-width: 4.5rem;
+}
+
+.reading-value {
+  font-size: 1.9rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.reading-unit { color: var(--muted); font-size: 0.85rem; }
+
+.reading-meta {
+  margin: 0.75rem 0 0;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.reading-meta.error { color: #ff8f8f; }
+
 /* Sized in vh so the chart stays usable on a phone held either way. */
 .chart {
   width: 100%;

@@ -94,5 +94,61 @@ async function refresh() {
   }
 }
 
+// The speed test runs every few hours, so polling it at the ping rate would be
+// thousands of pointless queries a day on a Pi 3. Slow enough to be cheap,
+// often enough that a finished test appears without a page reload.
+const SPEEDTEST_POLL_INTERVAL_MS = 60000;
+
+const speedtestFields = {
+  download: document.getElementById("speedtest-download"),
+  upload: document.getElementById("speedtest-upload"),
+  ping: document.getElementById("speedtest-ping"),
+};
+const speedtestMeta = document.getElementById("speedtest-meta");
+
+function formatReading(value) {
+  return value === null || value === undefined ? "—" : value.toFixed(1);
+}
+
+function describeSpeedtest(body) {
+  const when = new Date(body.timestamp).toLocaleString();
+  if (!body.success) {
+    return `Last attempt failed at ${when} — the line or the test server was unreachable`;
+  }
+  const where = [body.isp, body.server].filter(Boolean).join(" · ");
+  return where ? `${when} · ${where}` : when;
+}
+
+async function refreshSpeedtest() {
+  try {
+    const response = await fetch("/api/speedtest/latest");
+    if (!response.ok) {
+      throw new Error(`the server returned ${response.status}`);
+    }
+    const body = await response.json();
+
+    if (body.result === null) {
+      speedtestMeta.textContent = "Waiting for the first speed test…";
+      speedtestMeta.classList.remove("error");
+      return;
+    }
+
+    // A failed run clears the numbers rather than leaving the previous run's
+    // figures on screen, where they would read as current.
+    speedtestFields.download.textContent = formatReading(body.download_mbps);
+    speedtestFields.upload.textContent = formatReading(body.upload_mbps);
+    speedtestFields.ping.textContent = formatReading(body.ping_ms);
+
+    speedtestMeta.textContent = describeSpeedtest(body);
+    speedtestMeta.classList.toggle("error", !body.success);
+  } catch (error) {
+    speedtestMeta.textContent = `Could not load the speed test: ${error.message}`;
+    speedtestMeta.classList.add("error");
+  }
+}
+
 refresh();
 setInterval(refresh, POLL_INTERVAL_MS);
+
+refreshSpeedtest();
+setInterval(refreshSpeedtest, SPEEDTEST_POLL_INTERVAL_MS);

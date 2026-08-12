@@ -63,6 +63,28 @@ def create_app(config: Config) -> Flask:
             targets=series,
         )
 
+    @app.get("/api/speedtest/latest")
+    def latest_speedtest():
+        with db.connect(config.database_path) as conn:
+            result = db.latest_speedtest_result(conn)
+
+        if result is None:
+            # Distinct from a failed run, which returns a result whose success
+            # is false. "Nothing has run yet" and "the last run failed" are
+            # different things and the panel says so differently.
+            return jsonify(result=None)
+
+        return jsonify(
+            result="latest",
+            timestamp=result.timestamp.isoformat(),
+            download_mbps=result.download_mbps,
+            upload_mbps=result.upload_mbps,
+            ping_ms=result.ping_ms,
+            isp=result.isp,
+            server=result.server,
+            success=result.success,
+        )
+
     return app
 
 

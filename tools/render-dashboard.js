@@ -68,11 +68,23 @@ const { JSDOM, VirtualConsole } = jsdomModule;
 const virtualConsole = new VirtualConsole();
 virtualConsole.forwardTo(console, { jsdomErrors: "none" });
 
+// Deliberately not the real page's placeholder text. "Waiting for the first
+// speed test" is what dashboard.js itself writes when no test has ever run, so
+// reusing it here would make "the fetch has not finished" and "there is no data"
+// indistinguishable, and the panel would be read before it had loaded.
+const PENDING = "pending…";
+
 // Mirrors the real dashboard.html closely enough for dashboard.js to find what
 // it looks for, including the initial status text it replaces.
 const dom = new JSDOM(
   `<!doctype html><html><body>
      <p class="status" id="status">Loading&hellip;</p>
+     <section id="speedtest-panel">
+       <span id="speedtest-download">&mdash;</span>
+       <span id="speedtest-upload">&mdash;</span>
+       <span id="speedtest-ping">&mdash;</span>
+       <p id="speedtest-meta">${PENDING}</p>
+     </section>
      <div id="latency-chart" style="width:900px;height:480px"></div>
    </body></html>`,
   { pretendToBeVisual: true, virtualConsole }
@@ -113,12 +125,18 @@ global.setInterval = () => 0;
 require(path.join(REPO, "bbmon/web/static/dashboard.js"));
 
 const statusElement = document.getElementById("status");
+const speedtestMetaElement = document.getElementById("speedtest-meta");
 const startedAt = Date.now();
 
 function whenRendered() {
   return new Promise((resolve, reject) => {
     const poll = realSetInterval(() => {
-      if (statusElement.textContent !== "Loading…") {
+      // Both panels are polled independently, so both have to have written
+      // before anything is read — otherwise the speed test is judged on
+      // whatever the DOM happened to hold when the chart finished first.
+      const chartDone = statusElement.textContent !== "Loading…";
+      const speedtestDone = speedtestMetaElement.textContent !== PENDING;
+      if (chartDone && speedtestDone) {
         clearInterval(poll);
         resolve();
       } else if (Date.now() - startedAt > RENDER_TIMEOUT_MS) {
@@ -127,6 +145,36 @@ function whenRendered() {
       }
     }, 50);
   });
+}
+
+// The speed test panel is ordinary DOM rather than an ECharts canvas, so it
+// never reaches the SVG. It is checked here instead, because otherwise nothing
+// short of a real browser exercises this code path at all.
+function speedtestProblems() {
+  const meta = speedtestMetaElement.textContent;
+  const download = document.getElementById("speedtest-download").textContent;
+  console.log(`speedtest: ${download} Mbps down — ${meta}`);
+
+  if (meta.startsWith("Could not load")) {
+    return ["the speed test panel could not load its data"];
+  }
+  if (meta.startsWith("Waiting for the first")) {
+    // Not a failure: a database with no speed test in it is the normal state
+    // until the service has run once.
+    return [];
+  }
+  if (meta.startsWith("Last attempt failed")) {
+    // Also not a failure of the page. A failed run is meant to blank the
+    // readings rather than leave the previous run's figures reading as
+    // current, so an empty download here is the correct rendering.
+    return download === "—"
+      ? []
+      : ["a failed speed test left stale readings on screen"];
+  }
+  if (download === "—") {
+    return ["a successful speed test left the download reading blank"];
+  }
+  return [];
 }
 
 function report(svg) {
@@ -166,6 +214,7 @@ function report(svg) {
     if (!text.includes(name)) problems.push(`${name} missing from the legend`);
   }
   if (!text.includes("ms")) problems.push("the y axis lost its unit");
+  problems.push(...speedtestProblems());
 
   if (problems.length) {
     console.error(`\nFAIL: ${problems.join("; ")}`);

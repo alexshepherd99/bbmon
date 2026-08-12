@@ -13,6 +13,28 @@
   </header>
 
   <main>
+    <section class="card" id="speedtest-panel">
+      <h2>Latest speed test</h2>
+      <div class="readings">
+        <div class="reading">
+          <span class="reading-label">Download</span>
+          <span class="reading-value" id="speedtest-download">&mdash;</span>
+          <span class="reading-unit">Mbps</span>
+        </div>
+        <div class="reading">
+          <span class="reading-label">Upload</span>
+          <span class="reading-value" id="speedtest-upload">&mdash;</span>
+          <span class="reading-unit">Mbps</span>
+        </div>
+        <div class="reading">
+          <span class="reading-label">Latency</span>
+          <span class="reading-value" id="speedtest-ping">&mdash;</span>
+          <span class="reading-unit">ms</span>
+        </div>
+      </div>
+      <p class="reading-meta" id="speedtest-meta">Waiting for the first speed test&hellip;</p>
+    </section>
+
     <section class="card">
       <h2>Ping latency &mdash; last 2 hours</h2>
       <div id="latency-chart" class="chart"></div>
