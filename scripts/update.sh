@@ -38,7 +38,12 @@ discard_deploy_artifacts() {
   local owner="$1" modified
   # Tracked modifications only. Untracked files do not block a fast-forward and
   # are not ours to delete.
-  modified="$(sudo -u "$owner" git status --porcelain | grep -v '^??' | cut -c4-)"
+  #
+  # --untracked-files=no rather than filtering '??' lines with grep: under
+  # `set -o pipefail`, a grep that matches nothing returns 1 and takes the whole
+  # assignment — and therefore the script — down with it. On a clean tree, which
+  # is the normal case, that made update.sh exit 1 having printed nothing at all.
+  modified="$(sudo -u "$owner" git status --porcelain --untracked-files=no | cut -c4-)"
   [[ -n "$modified" ]] || return 0
 
   log "Discarding local modifications from a previous deploy.sh"
