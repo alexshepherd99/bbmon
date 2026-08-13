@@ -213,7 +213,11 @@ Two things generalise.
 
 **An audit that only re-runs the checks already run finds nothing new.** The scan that caught this is the same one that passed earlier in the session; what changed was running it over the whole repository again at the end, rather than over the diff in front of me. Checking the thing just written is not the same as checking what the repository now contains.
 
-The working tree was corrected immediately. The value remains in the history of commit `42df0ac` onward, which is now public — handled separately rather than folded in here.
+The working tree was corrected immediately. **The history was deliberately left alone**, decided on being shown the cost and the alternative: the value is an RFC 1918 private address from the commonest home range, it identifies nothing about anyone, and a second rewrite would have meant disabling the branch protection enabled hours earlier, re-pointing the quoted SHAs a second time, and re-syncing the Pi — for no gain in what anyone could learn. Recorded so this is not later mistaken for something nobody noticed.
+
+Note the shape of that judgement, because it sits in tension with the rule being categorical. The rule stays categorical *for writing*: the point of not weighing individual values is that the weighing is what erodes it. Whether an already-published value justifies a second history rewrite is a different question, with real costs on the other side, and is decided case by case.
+
+Both lessons went to the `agentic` proposals rather than staying here — the write-time trap into the prevention rule, and the whole-repository re-scan into the review skill.
 
 ## 2026-08-13 — Full security review of the repository
 
