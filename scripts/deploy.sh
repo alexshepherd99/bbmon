@@ -3,7 +3,7 @@
 # Push the local working tree to the Pi and restart what it affects.
 #
 #   scripts/deploy.sh              # deploy to $BBMON_HOST, default raspberrypi
-#   scripts/deploy.sh pi@1.2.3.4   # deploy somewhere else
+#   scripts/deploy.sh pi@192.0.2.10   # deploy somewhere else
 #   scripts/deploy.sh --dry-run    # show what would change, change nothing
 #
 # This is the development loop: it deliberately does NOT require a commit, so
