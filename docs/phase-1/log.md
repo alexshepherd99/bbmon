@@ -201,6 +201,18 @@ The change was made behind a `systemd-run --on-active=300` dead-man revert, disa
 
 Next: M4 — restarts and the reboot mechanism.
 
+## 2026-08-13 — What the end-of-session audit caught
+
+Three things, none of which the work itself had surfaced. Recorded together because the pattern is the point: each had already passed a check earlier in the session.
+
+- **A private address quoted inside the entry arguing against quoting addresses** — see the entry below.
+- **The security review's findings existed only in conversation.** Two of them were decisions M6 has to honour, and would have been lost entirely. They are now in the security posture in `plan.md`, where M6 will actually meet them.
+- **A regression in `update.sh`, introduced an hour earlier.** The dirty-tree fix filtered untracked files with `grep -v '^??'`; under `set -o pipefail` a grep matching nothing returns 1 and killed the script at the assignment. So it failed on a *clean* tree — the normal case — while working on the dirty tree it had been written for. It exited 1 having printed nothing, which is why nothing looked wrong.
+
+That last one has the sharpest lesson: **the verification only exercised the case the change was about.** The fix was tested on a dirty tree, which passed, and the untouched path was never re-run. Both are checked now, and both cases pass on the Pi.
+
+The general form, which is why the end-of-session review is worth the time rather than being a formality: **checking each change as it is made answers a different question from checking what the repository now is.** All three of these sat inside work that had been reviewed, tested and pushed.
+
 ## 2026-08-13 — The rule was broken by the entry that wrote the rule
 
 Found in the end-of-session audit, which is the only reason it was found at all. The 2026-08-13 redaction entry below argued that a private LAN address is less identifying than an ISP and a city — and quoted the actual address to make the comparison. So the entry establishing that identifying data must not enter the repository put an identifying value into the repository, in its own supporting argument.
