@@ -201,6 +201,20 @@ The change was made behind a `systemd-run --on-active=300` dead-man revert, disa
 
 Next: M4 — restarts and the reboot mechanism.
 
+## 2026-08-13 — The rule was broken by the entry that wrote the rule
+
+Found in the end-of-session audit, which is the only reason it was found at all. The 2026-08-13 redaction entry below argued that a private LAN address is less identifying than an ISP and a city — and quoted the actual address to make the comparison. So the entry establishing that identifying data must not enter the repository put an identifying value into the repository, in its own supporting argument.
+
+It survived four separate readings: writing it, committing it, a history rewrite performed specifically to remove identifying data from this file, and a review of that rewrite. Every one of those was looking for exactly this.
+
+Two things generalise.
+
+**Prose about a rule is not exempt from the rule.** The failure mode is specific and worth naming: quoting a value in order to explain why it is sensitive. It reads as legitimate while writing, because the sentence is *about* protecting the value — and the scan cannot tell the difference, because the value is identical either way.
+
+**An audit that only re-runs the checks already run finds nothing new.** The scan that caught this is the same one that passed earlier in the session; what changed was running it over the whole repository again at the end, rather than over the diff in front of me. Checking the thing just written is not the same as checking what the repository now contains.
+
+The working tree was corrected immediately. The value remains in the history of commit `42df0ac` onward, which is now public — handled separately rather than folded in here.
+
 ## 2026-08-13 — Full security review of the repository
 
 Whole repository and whole history, not a branch diff — the built-in `security-review` is diff-scoped and returns nothing against a clean tree, which is what it did. Recorded here because the findings were otherwise only ever stated in conversation.
@@ -223,7 +237,7 @@ Three low findings, all now closed or scheduled:
 
 A security review of the whole repository and its history found no credentials, no keys and no addresses — the scan was clean on every pattern it looked for. What it missed on the first pass, and found only when the public/private decision forced the question, was **semantic** rather than pattern-shaped: three entries in this log named the ISP, the speed test server's city, and the measured line speeds.
 
-That is more identifying than the LAN address deliberately kept out of the repo on 2026-08-12. `192.168.1.175` means nothing to anyone outside this house; "this ISP, this city, this line speed", attached to a named GitHub account, is ordinary personal data. The rule adopted the previous day was written as "no machine specifics", and the honest reading of its intent covers this too.
+That is more identifying than the LAN address deliberately kept out of the repo on 2026-08-12. A private address means nothing to anyone outside this house; "this ISP, this city, this line speed", attached to a named GitHub account, is ordinary personal data. The rule adopted the previous day was written as "no machine specifics", and the honest reading of its intent covers this too.
 
 Redacted here rather than left with a marker, but **not** silently: the technical claim each entry was making is preserved in full, because none of it depended on the figures. "A real run produced plausible download, upload and latency figures with the ISP field populated" carries exactly the evidence the original sentence carried — that the parser works against real output — and carries none of the personal detail. Nothing about what was verified has changed.
 
