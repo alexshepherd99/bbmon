@@ -228,3 +228,23 @@ The generalisable form: **a history rewrite invalidates every hash in the reposi
 **What this does not do**, restated because it stays true: the figures were public when originally pushed and rewriting history does not reach anyone who cloned or cached them then.
 
 The pre-rewrite state was bundled to a local scratch file before starting, and is not in the repository.
+
+## 2026-08-13 — Public again, protected, and `update.sh` finally run
+
+**Access was verified before the switch, not after.** One collaborator with push rights, no outside collaborators, no pending invitations, no deploy keys, no forks, and a personal owner so no team grants. One thing could *not* be checked: installed GitHub Apps, whose endpoints refuse an ordinary user token. Recorded as unverified rather than passed.
+
+The repository was then made public and **branch protection enabled immediately** — force-push blocked, deletion blocked, and applied to administrators, which is the setting that makes it mean anything on a repository whose only collaborator is an admin. There is no CI to require, so those two blocks are the whole of it. Making it public also enabled secret scanning and push protection automatically, both unavailable while private; zero alerts.
+
+An **anonymous clone** was taken as the final check on the rewrite, since that is literally the public view: no ISP, no location, no throughput figures anywhere in the history.
+
+**`update.sh` ran for the first time and failed twice, both real defects.** It was the only M2 script never exercised, and it produced roughly the same yield per run as `bootstrap.sh` did at G1.
+
+*A bare `git pull` needs upstream tracking, and there wasn't any.* The tracking had been lost as a side effect of the history rewrite — `git-filter-repo` removes the origin remote by design, and re-adding the remote does not restore `branch.main.merge`. The Pi inherited that when its `.git` was resynced. The remote and branch are now named explicitly, so the script no longer depends on local config that can vanish without anyone editing it. The failure also *read* like a git problem, several lines of advice about setting an upstream, which is the wrong signal in the middle of a deploy.
+
+*Then it aborted on a working tree `deploy.sh` had dirtied.* "Your local changes would be overwritten by merge — please commit or stash." But this is the designed sequence, not an edge case: `deploy.sh` exists to push uncommitted work for testing and `update.sh` exists to return to committed code. Git's advice is also wrong on a deploy target, where nothing is authored and a modified tracked file is always a leftover. `update.sh` now discards tracked modifications before pulling and lists every file it throws away; untracked files are left alone, since they do not block a fast-forward and are not ours to delete.
+
+Both were verified by reproducing them on hardware — the second by dirtying the tree exactly as `deploy.sh` would, watching the old behaviour abort, and watching the new behaviour list the artifact and carry on.
+
+That closes the last "never run" item from M2. Of the four M2 deliverables, every one has now failed at least once on contact with real hardware, and none of those failures was visible to review or to the test suite.
+
+Next: M4 — restarts and the reboot mechanism.
