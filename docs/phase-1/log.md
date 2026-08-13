@@ -201,6 +201,24 @@ The change was made behind a `systemd-run --on-active=300` dead-man revert, disa
 
 Next: M4 — restarts and the reboot mechanism.
 
+## 2026-08-13 — Full security review of the repository
+
+Whole repository and whole history, not a branch diff — the built-in `security-review` is diff-scoped and returns nothing against a clean tree, which is what it did. Recorded here because the findings were otherwise only ever stated in conversation.
+
+**No high or medium severity vulnerabilities.** Everything the "Security posture" section above commits to was checked as *implemented* rather than taken on trust: parameterised SQL throughout, argv lists with no `shell=True`, `yaml.safe_load` only, Flask debug off (and `/console` returning 404 on the running Pi), and the systemd sandboxing confirmed in force via `systemctl show` rather than by reading the unit files.
+
+Two controls were tested rather than reasoned about. The one reflected-input path — `minutes` echoed into a `BadRequest` — was probed live with `<script>` and `<img onerror>` payloads and is escaped by Werkzeug. The vendored ECharts bundle's SHA-256 was recomputed and matches the value recorded beside it.
+
+Three low findings, all now closed or scheduled:
+
+- **DNS rebinding can read the telemetry.** The app accepts any `Host`. Low only because every route is a `GET` — confirmed by POSTing each one and getting 405. Scheduled at M6, with the sequencing requirement now written into the security posture above.
+- **A real routable address used as a documentation example** in `deploy.sh`. Fixed.
+- **M6 cannot write the config file it is required to write.** Not currently exploitable; recorded above because the tempting fix is the insecure one.
+
+**One accepted deviation, stated so it is not mistaken for an oversight.** The development container authenticates every repository through a single classic token with full `repo` scope, which can push to `main` and can also switch off the branch protection meant to contain it. A fine-grained token scoped to named repositories, without administration rights and with an expiry, is the tighter arrangement and is the standard now drafted for `agentic`. Not changed here: the container is a personal machine with passwordless `sudo`, so anyone holding it has other routes. Worth doing, not urgent.
+
+**What the review missed on its first pass is the more useful finding**, and is recorded in the entry below: it scanned for the shapes of secrets and found none, while ordinary personal data sat in this log in plain prose.
+
 ## 2026-08-13 — ISP, location and throughput figures redacted from this log
 
 A security review of the whole repository and its history found no credentials, no keys and no addresses — the scan was clean on every pattern it looked for. What it missed on the first pass, and found only when the public/private decision forced the question, was **semantic** rather than pattern-shaped: three entries in this log named the ISP, the speed test server's city, and the measured line speeds.
