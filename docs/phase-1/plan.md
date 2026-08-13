@@ -1,6 +1,6 @@
 # Phase 1 — Plan
 
-Replaces the milestone outline drafted 2026-08-03 (recoverable at commit `344cc08`), which assumed no Raspberry Pi until the final milestone. A Pi is available from the outset, so the plan now runs the hardware in parallel with development rather than at the end.
+Replaces the milestone outline drafted 2026-08-03 (recoverable at commit `4c5f866`), which assumed no Raspberry Pi until the final milestone. A Pi is available from the outset, so the plan now runs the hardware in parallel with development rather than at the end.
 
 **Goal: a working prototype as fast as possible.** The shape is a vertical slice — the first milestone puts a live ping chart in a browser, and every later milestone thickens a system that already runs, rather than adding a component that isn't wired to anything yet.
 
@@ -83,7 +83,6 @@ Deferred to `BACKLOG.md` as hardening rather than hole-closing: a host firewall 
 
 ## Open items
 
-- **The redacted ISP, location and throughput figures remain in the git history.** The working tree was cleaned on 2026-08-13, but the original blobs are still reachable, so the redaction is cosmetic for anyone who clones. **This matters because the repository is going public**, which publishes the history along with the tree. Two options, undecided: rewrite history (viable here — sole collaborator, and the Pi's clone can simply be re-cloned) or accept it. Whichever is chosen, it needs deciding *before* the repository is made public, not after.
 - **The figures were already published.** The repository was public when those entries were pushed, so exposure has to be assumed rather than argued away, and rewriting history does not undo it. Realistically the audience was nobody, but that is not a claim that can be made with evidence. No action beyond not repeating it; recorded so it is not later mistaken for a clean record.
 - **Going public has a checklist attached.** When the switch is made: enable branch protection on `main` (blocking force-push and deletion — available free once public, and unavailable now), confirm `update.sh` works again over anonymous HTTPS, and update the three documents that describe the credential position. No deploy key is needed on that path.
 - **`update.sh` has still never run.** G1 exercised `bootstrap.sh` and `deploy.sh` on the Pi and found four defects between them; `update.sh` was not exercised, because clearing G1 needed no update from committed code. It is the one M2 script whose first real run is still ahead of it, and G4 already lists "`update.sh` from a clean git pull".

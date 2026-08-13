@@ -1,6 +1,6 @@
 # Phase 1 — Requirements
 
-Migrated 2026-08-03 from the repo-root `REQUIREMENTS.md` (removed in the same change; original at commit 05ab2b5). Phase 2+ items moved to `BACKLOG.md`.
+Migrated 2026-08-03 from the repo-root `REQUIREMENTS.md` (removed in the same change; original at commit 7da4a66). Phase 2+ items moved to `BACKLOG.md`.
 
 ## Overview
 

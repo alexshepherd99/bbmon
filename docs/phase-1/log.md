@@ -12,7 +12,7 @@ Mapping applied, with sign-off on each of the three decisions:
 - Phase 2+ list (7 items) → `BACKLOG.md`, priority order preserved.
 - "DB schema migration strategy" open question → `BACKLOG.md` (its stated driver is Phase 2+ collectors). Phase 1 keeps only a versioned-schema-init constraint so the mechanism can land later without rework.
 - Remaining four open questions → "Open decisions" in `requirements.md`. Three block specific milestones; the reboot trigger mechanism is marked deploy-stage, since it cannot be tested on Crostini.
-- Root `REQUIREMENTS.md` deleted rather than stubbed — recoverable at commit 05ab2b5, and one source of truth beats two. `CLAUDE.md`'s pointer updated.
+- Root `REQUIREMENTS.md` deleted rather than stubbed — recoverable at commit 7da4a66, and one source of truth beats two. `CLAUDE.md`'s pointer updated.
 - Effort named `phase-1` to match the vocabulary already in use. Not collapsed to a single `log.md` — ten requirement sections across four services is past trivial.
 
 Recorded the development environment as a first-class platform assumption: development happens on a Chromebook under Crostini, with a Raspberry Pi entering only at M9. Consequences captured in `requirements.md` (systemd, ICMP privileges, reboot no-op, non-comparable speed test figures, no LAN reachability, CPU architecture, unverifiable low-spec behaviour).
@@ -27,7 +27,7 @@ Two premises of the 2026-08-03 plan turned out to be wrong, and the replan follo
 
 **A Pi is available now.** The previous plan deferred all hardware to a final M9. Corrected: hardware access is *intermittent* — Alex is often developing away from it — which is a different problem from hardware being absent, and neither "wait for the Pi" nor "ignore the Pi until the end" answers it. Resolution: every milestone is built and unit-tested to completion on Crostini so nothing blocks on access, and Pi-only verification is batched into four gates (G1 first deploy, G2 real measurements, G3 reboot, G4 soak) cleared in a single visit. The deploy loop is pulled early to M2 so clearing a gate costs minutes, not a re-setup.
 
-**The goal is a working prototype quickly.** The previous plan built each component fully before the next, so nothing was visible end-to-end until M7. Replaced with a vertical slice: M1 alone carries config → SQLite → pinger → a live chart in a browser, deliberately thin (one chart, raw rows, no aggregation, no admin page, no speedtest), and later milestones thicken a running system. `plan.md` rewritten rather than amended; the original is at commit `344cc08`.
+**The goal is a working prototype quickly.** The previous plan built each component fully before the next, so nothing was visible end-to-end until M7. Replaced with a vertical slice: M1 alone carries config → SQLite → pinger → a live chart in a browser, deliberately thin (one chart, raw rows, no aggregation, no admin page, no speedtest), and later milestones thicken a running system. `plan.md` rewritten rather than amended; the original is at commit `4c5f866`.
 
 Scope discipline is stated explicitly in the plan, with non-goals named and a standing rule that discoveries go to `BACKLOG.md`. Security is the sole admitted exception, and only where something opens a hole in the home network.
 
@@ -214,3 +214,17 @@ This is the one admitted exception to this log being append-only. The convention
 **Standing rule, generalised from this:** a repository must contain no data identifying a machine, a network, a *person*, or a location. Addresses, key fingerprints, hostnames and MAC addresses were the original list; ISP, geographic location and measured line characteristics belong on it. Real measurements go in the database, which is not tracked — never into documentation.
 
 **Two things this does not fix.** The figures remain in the git history blobs, so redacting the working tree is cosmetic while that history exists; with the repository going public, that history goes public too. And they were already published, since the repository was public when those entries were pushed — realistically to nobody, but that cannot be asserted. Both are open questions recorded in `plan.md` rather than decided here.
+
+## 2026-08-13 — History rewritten to remove the redacted figures
+
+The first of the two open questions above is closed: the history was rewritten with `git-filter-repo --replace-text`, replacing the four passages with the same wording the working tree already carried. Every blob in the repository was re-scanned afterwards — 8 occurrences before, 0 after — and all 49 commits survived, none dropped.
+
+Done before the repository is made public, which was the whole point of the timing. A rewrite is cheap here (one branch, no tags, no forks, one collaborator, two clones) and gets steadily more expensive once a public repository starts accumulating clones nobody can reach.
+
+**A prediction made while explaining the change was wrong, and the error is worth keeping.** Two commit SHAs are quoted in the docs as recovery pointers, and the claim was that both would survive because they predate the earliest affected commit. Both broke. `git-filter-repo` rewrites the *entire* history it is given rather than only the commits from the first change onward, so every SHA in the repository changed, not just the twelve downstream ones. The references were repointed and both now resolve.
+
+The generalisable form: **a history rewrite invalidates every hash in the repository, not just the ones after the edit.** The mental model of "downstream commits change because their parents changed" is right about the mechanism and wrong about the blast radius. This has been corrected in the guidance drafted for `agentic`, where it had been written down in the wrong form.
+
+**What this does not do**, restated because it stays true: the figures were public when originally pushed and rewriting history does not reach anyone who cloned or cached them then.
+
+The pre-rewrite state was bundled to a local scratch file before starting, and is not in the repository.

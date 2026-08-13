@@ -4,7 +4,7 @@ Not-yet-started work. Items move out of here into `docs/<effort-name>/` when pic
 
 ## Phase 2+ monitoring features
 
-Ordered by suggested priority (highest value / most natural extension first). Carried over from `REQUIREMENTS.md` (removed 2026-08-03; original at commit 05ab2b5).
+Ordered by suggested priority (highest value / most natural extension first). Carried over from `REQUIREMENTS.md` (removed 2026-08-03; original at commit 7da4a66).
 
 1. **Gateway/router ping alongside WAN targets** — ping the router's LAN IP as one of the regular ping targets, to distinguish "LAN/WiFi problem" from "ISP problem." Directly extends the existing ping architecture — just another target.
 2. **Jitter** — derive latency variance between consecutive pings from data already being collected. Standard VoIP/gaming quality metric, effectively free to add.
