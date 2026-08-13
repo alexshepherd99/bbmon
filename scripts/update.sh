@@ -39,11 +39,17 @@ main() {
   local owner
   owner="$(stat -c '%U' "$INSTALL_DIR")"
 
-  local before after
+  local before after branch
   before="$(sudo -u "$owner" git rev-parse HEAD)"
+  branch="$(sudo -u "$owner" git rev-parse --abbrev-ref HEAD)"
 
-  log "Pulling"
-  sudo -u "$owner" git pull --ff-only
+  log "Pulling $branch from origin"
+  # Remote and branch are named explicitly rather than relying on this clone
+  # having upstream tracking configured. That config is easy to lose — a
+  # history rewrite removes the remote, and re-adding it does not restore the
+  # tracking — and a bare `git pull` then fails with advice about setting an
+  # upstream, which reads like a git problem rather than a deploy one.
+  sudo -u "$owner" git pull --ff-only origin "$branch"
   after="$(sudo -u "$owner" git rev-parse HEAD)"
 
   if [[ "$before" == "$after" ]]; then
