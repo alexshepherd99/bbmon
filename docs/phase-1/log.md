@@ -118,7 +118,7 @@ Next: M2 — Pi bootstrap and the deploy loop. Its open question is whether the 
 
 M3's parsing was written against an assumed output shape, which was the largest risk it carried into G2 — a wrong guess would have cost a home visit to find. The binary was installed on the Crostini container instead (x86_64 tarball, into `~/.bbmon-tools/` alongside jsdom, deliberately not into the repo and not system-wide) and run for real.
 
-**Every field assumption held.** `type: "result"`, `ping.latency`, `download.bandwidth`, `upload.bandwidth`, `isp`, `server.name` and `server.location` are all present with the expected types, and `bandwidth` is indeed bytes per second. A real run through `SpeedtestCollector` produced plausible download, upload and latency figures, with the ISP and server-name fields populated as expected.
+**Every field assumption held.** `type: "result"`, `ping.latency`, `download.bandwidth`, `upload.bandwidth`, `isp`, `server.name` and `server.location` are all present with the expected types, and `bandwidth` is indeed bytes per second. A real run through `SpeedtestCollector` produced plausible download, upload and latency figures, with the ISP and server-name fields populated as expected. (Redacted 2026-08-13 — see that day's entry.)
 
 Facts worth having recorded for M2 and G2:
 
@@ -200,3 +200,17 @@ The change was made behind a `systemd-run --on-active=300` dead-man revert, disa
 **Not verified.** `update.sh` has still never run; the mobile layout has never been seen on a phone. Both carried to G4. Throughput figures from the Pi differ markedly from Crostini's, which is expected — G2 is where speed test numbers are actually assessed.
 
 Next: M4 — restarts and the reboot mechanism.
+
+## 2026-08-13 — ISP, location and throughput figures redacted from this log
+
+A security review of the whole repository and its history found no credentials, no keys and no addresses — the scan was clean on every pattern it looked for. What it missed on the first pass, and found only when the public/private decision forced the question, was **semantic** rather than pattern-shaped: three entries in this log named the ISP, the speed test server's city, and the measured line speeds.
+
+That is more identifying than the LAN address deliberately kept out of the repo on 2026-08-12. `192.168.1.175` means nothing to anyone outside this house; "this ISP, this city, this line speed", attached to a named GitHub account, is ordinary personal data. The rule adopted the previous day was written as "no machine specifics", and the honest reading of its intent covers this too.
+
+Redacted here rather than left with a marker, but **not** silently: the technical claim each entry was making is preserved in full, because none of it depended on the figures. "A real run produced plausible download, upload and latency figures with the ISP field populated" carries exactly the evidence the original sentence carried — that the parser works against real output — and carries none of the personal detail. Nothing about what was verified has changed.
+
+This is the one admitted exception to this log being append-only. The convention exists so that what was believed at the time cannot be quietly rewritten; redacting personal data is a different act from revising a claim, and it is recorded here rather than done invisibly.
+
+**Standing rule, generalised from this:** a repository must contain no data identifying a machine, a network, a *person*, or a location. Addresses, key fingerprints, hostnames and MAC addresses were the original list; ISP, geographic location and measured line characteristics belong on it. Real measurements go in the database, which is not tracked — never into documentation.
+
+**Two things this does not fix.** The figures remain in the git history blobs, so redacting the working tree is cosmetic while that history exists; with the repository going public, that history goes public too. And they were already published, since the repository was public when those entries were pushed — realistically to nobody, but that cannot be asserted. Both are open questions recorded in `plan.md` rather than decided here.
