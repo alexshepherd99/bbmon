@@ -26,6 +26,27 @@ require_root() {
   [[ $EUID -eq 0 ]] || die "run this with sudo: sudo $0"
 }
 
+# scripts/deploy.sh rsyncs uncommitted work onto this machine, which leaves
+# tracked files modified relative to git. git then refuses to pull over them and
+# suggests committing or stashing — advice that makes no sense on a deploy
+# target, where nothing is authored and every local modification is a leftover
+# from testing.
+#
+# Discarding them is therefore the correct reading of "update to committed
+# code", but it is never done silently: whatever is thrown away is listed first.
+discard_deploy_artifacts() {
+  local owner="$1" modified
+  # Tracked modifications only. Untracked files do not block a fast-forward and
+  # are not ours to delete.
+  modified="$(sudo -u "$owner" git status --porcelain | grep -v '^??' | cut -c4-)"
+  [[ -n "$modified" ]] || return 0
+
+  log "Discarding local modifications from a previous deploy.sh"
+  while read -r path; do note "$path"; done <<< "$modified"
+  sudo -u "$owner" git checkout -- .
+  note "restored to committed state"
+}
+
 main() {
   require_root
   [[ -d "$INSTALL_DIR/.git" ]] \
@@ -38,6 +59,8 @@ main() {
   # the next non-root git command.
   local owner
   owner="$(stat -c '%U' "$INSTALL_DIR")"
+
+  discard_deploy_artifacts "$owner"
 
   local before after branch
   before="$(sudo -u "$owner" git rev-parse HEAD)"
