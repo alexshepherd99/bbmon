@@ -39,7 +39,7 @@ Split into independent systemd services, communicating only via the shared SQLit
 1. **`bbmon-pinger`** — runs the ping loop
 2. **`bbmon-speedtest`** — runs the speed test loop
 3. **`bbmon-web`** — Flask app serving dashboard + config/reboot pages
-4. **`bbmon-reboot`** — timer/service that triggers the periodic reboot and logs it
+4. **`bbmon-reboot`** — a root one-shot unit that reboots the machine, started by a `bbmon-reboot.path` watcher when an unprivileged service asks. Nothing of bbmon's own runs in it; the schedule and the restart record live in the services above
 
 A shared Python package (e.g. `bbmon/`) holds common code: config loader, DB access layer, models. Each service is a thin entrypoint importing this shared package. Collectors (ping, speedtest, and future test types) conform to a common interface — see Extensibility (item 9) — so new periodic tests can be added as a new module + systemd service without changing existing services.
 
@@ -90,10 +90,11 @@ A shared Python package (e.g. `bbmon/`) holds common code: config loader, DB acc
 
 ## 6. Reboot Management
 
-- Reboots the Pi every `reboot.interval_days` (default 3), via a systemd timer or scheduled check
-- Before rebooting, writes a `restarts` row with `expected = true`
-- On every service startup, the app checks whether the prior shutdown was logged as expected; if not, logs `expected = false` (covers power loss, crashes, manual reboots)
+- Reboots the Pi every `reboot.interval_days` (default 3), as a scheduled check inside the ping service's existing loop
+- Before rebooting, records that the reboot was deliberate, so the restart can be told apart from a power cut afterwards
+- On startup, the app records the restart: `expected = true` if the reboot was deliberate, `expected = false` otherwise (covering power loss, crashes, manual reboots). One row per boot, timestamped when the restart was noticed — the only time a restart record can honestly carry, since an unexpected restart is not observed while it happens
 - Waits for NTP time sync before performing its first write on boot, so timestamps are reliable even if the Pi has no RTC
+- Rebooting is a Pi-only capability behind an abstraction (requirement 10), with a no-op implementation as the development default
 
 ## 7. Web Dashboard (main page)
 

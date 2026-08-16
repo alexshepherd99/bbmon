@@ -29,7 +29,7 @@ Development happens on the Chromebook (Crostini); the Pi is a deployment and ver
 
 **M3 — Speed test collector.** *(dev + gate G2)* Second collector against the M1 interface — which is the real test of whether that interface generalises; expect to adjust it here rather than guessing it right at M1. Failure rows recorded, never silently skipped. Latest-result panel added to the dashboard. *Depends on: M1.*
 
-**M4 — Restarts and the reboot mechanism.** *(dev + gate G3)* `restarts` rows, expected/unexpected detection on startup, NTP-sync wait before the first write. The reboot action sits behind an abstraction with a no-op implementation for dev; the real implementation is the narrow sudoers rule described below. *Depends on: M1.*
+**M4 — Restarts and the reboot mechanism.** *(dev + gate G3)* **Done (dev) 2026-08-16.** `restarts` rows, expected/unexpected detection on startup, NTP-sync wait before the first write. The reboot action sits behind an abstraction with a no-op implementation for dev; the real implementation is the path unit described below. Also picked up requirement 5's "skip a speed test if a reboot is imminently due", carried from M3. *Depends on: M1.*
 
 **M5 — Full dashboard.** *(dev)* The remaining two charts (hourly box plot over 1 day; speedtest history with selectable range), the pre-aggregation and short-lived server-side cache both charts read through, the restart list with its expected-restart toggle, the version/build footer, and the mobile layout. *Depends on: M3, M4.*
 
@@ -43,7 +43,15 @@ Development happens on the Chromebook (Crostini); the Pi is a deployment and ver
 
 **G2 — real measurements** *(after M3)*. Speed test produces meaningful numbers (Crostini figures validate the code path only); ping latency during a concurrent speed test looks sane; SD-card write volume from the buffered flush measured and acceptable.
 
-**G3 — reboot** *(after M4)*. Sudoers rule grants exactly the one command and nothing more; force-reboot actually reboots and logs `expected = true`; a pulled power cable is detected as `expected = false` on next boot; NTP wait behaves on a Pi with no RTC.
+**G3 — reboot** *(after M4)*. Nothing in M4 has run on hardware; every item here is a first execution.
+
+- `bbmon-reboot.path` is active after `bootstrap.sh`, and `bbmon-reboot.service` is installed but **not** enabled.
+- Writing `/var/lib/bbmon/reboot-now` as the `bbmon` user reboots the Pi, and the next boot records `expected = true` with the scheduled reason.
+- The Pi comes back **once**. A leftover trigger does not start a second reboot — the loop guard, and the reason this gate is worth clearing before the Pi is left running unattended.
+- A pulled power cable is recorded as `expected = false` on the next boot.
+- Restarting a single service (`systemctl restart bbmon-pinger`) adds no restart row.
+- The NTP wait behaves on a Pi with no RTC: `/run/systemd/timesync/synchronized` appears and the wait ends, rather than timing out at 120s.
+- Confirm the pinger keeps `NoNewPrivileges=yes` and still reboots — the whole point of the path unit.
 
 **G4 — soak** *(after M7)*. CPU and memory measured under normal load; log rotation observed; retention purge observed over several days; `update.sh` from a clean git pull; mobile layout on a real phone; full security checklist.
 
@@ -51,7 +59,7 @@ Development happens on the Chromebook (Crostini); the Pi is a deployment and ver
 
 The four items under "Open decisions" in `requirements.md`, plus the ones this plan's shape forces. All are closed here unless marked otherwise.
 
-- **Reboot trigger** — the web app runs one fixed command via a sudoers rule scoped to exactly `systemctl start bbmon-reboot.service`. No shell, no wildcards, no user-supplied arguments.
+- **Reboot trigger** — an unprivileged service writes `/var/lib/bbmon/reboot-now`; `bbmon-reboot.path` notices the write and systemd starts `bbmon-reboot.service`, a root unit that reboots and runs none of bbmon's code. *(Revised at M4. This was recorded as a sudoers rule scoped to `systemctl start bbmon-reboot.service`, which cannot work: `NoNewPrivileges=yes` on every unit makes the kernel ignore sudo's setuid bit, so sudo refuses to run. Keeping sudo would have meant dropping that directive from the pinger. See `log.md`.)*
 - **Web port and route structure** — one Flask app on port 8080; dashboard at `/`, admin at `/admin`. A second app would double the surface for no benefit.
 - **Purge job placement** — inside the pinger service's existing loop as a daily check, not a separate systemd timer. One fewer unit to install, secure and reason about.
 - **Default ping targets** — ship `8.8.8.8`, `1.1.1.1`, `google.com` as documented. It is a config default, editable from the admin page, so it is not worth further deliberation. (Adding the router as a target is `BACKLOG.md` item 1, not phase 1.)
@@ -72,11 +80,12 @@ Committed for phase 1, costed into the milestones above:
 - **Dedicated non-root `bbmon` service user**; no service runs as root or as `pi`. *(M2)*
 - **Systemd sandboxing** on every unit: `NoNewPrivileges=yes`, `ProtectSystem=strict`, `ProtectHome=yes`, `PrivateTmp=yes`, and `ReadWritePaths=` naming only `/var/lib/bbmon`. *(M2)*
 - **SSH key-only auth to the Pi, password auth disabled.** A guessable password on the well-known `pi` account is the largest single hole on a stock Pi, and it is unrelated to bbmon's own code. *(M2)*
-- **Sudoers grant is exactly one fixed command** — no wildcard, no argument the web app controls. *(M4)*
+- **No bbmon process is privileged, and none can gain a privilege.** The reboot is performed by a root unit that bbmon can start but cannot influence: the only input is that a watched file was written, so there is no argument, path or option for a web request to reach. Done at M4, and it is what let `NoNewPrivileges=yes` stay on every unit. *(M4)*
+- **The reboot trigger cannot loop the Pi.** Three guards, because the failure is unrecoverable without a keyboard at the machine: `PathModified=` fires on a write rather than on the file existing, `bbmon-reboot.service` deletes the trigger before rebooting, and `bbmon-init` deletes any leftover before the watcher is allowed to start. *(M4)*
 - **CSRF tokens on every state-changing request** (config save, force reboot). Without authentication there is no session to protect, but there is still an action to protect: any page in a LAN browser can otherwise POST a reboot. *(M6)*
 - **Host-header allowlist**, rejecting requests whose `Host` is not an expected name or IP. This is what stops DNS rebinding turning a random website into a client of the admin page. *(M6)* — **and it must land in the same commit as the first POST route, not merely the same milestone.** Confirmed live on 2026-08-13 that the app serves any `Host`; today that only exposes read-only telemetry, because every route is a `GET`. The first state-changing route turns the same weakness into a remote reboot trigger, so the two cannot be separated even by a day.
 - **Config written atomically** (temp file plus rename) with restrictive permissions, and only to the one fixed configured path — no user-supplied path reaches the filesystem. *(M6)*
-- **M6 must not gain that write access by loosening file permissions.** `bootstrap.sh` installs `/etc/bbmon/config.yaml` as `root:bbmon 0640`, and the `bbmon` user cannot write it — confirmed on the Pi at G1. The obvious fix, chowning it to `bbmon` or going `0660`, would hand an unauthenticated LAN-reachable web process write access to a root-owned file in `/etc`, on the same service that M6 also gives a reboot button. The intended route is a narrow privileged helper, the same shape as the reboot sudoers rule. Decided now because it is far cheaper to design in than to retrofit. *(M6)*
+- **M6 must not gain that write access by loosening file permissions.** `bootstrap.sh` installs `/etc/bbmon/config.yaml` as `root:bbmon 0640`, and the `bbmon` user cannot write it — confirmed on the Pi at G1. The obvious fix, chowning it to `bbmon` or going `0660`, would hand an unauthenticated LAN-reachable web process write access to a root-owned file in `/etc`, on the same service that M6 also gives a reboot button. The intended route is a narrow privileged helper the web app can ask but cannot instruct, the same shape M4's reboot ended up with. Decided now because it is far cheaper to design in than to retrofit. *(M6)*
 
 Deferred to `BACKLOG.md` as hardening rather than hole-closing: a host firewall restricting port 8080 to the LAN subnet, request rate limiting, and admin-page authentication.
 

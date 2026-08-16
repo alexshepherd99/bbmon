@@ -296,3 +296,42 @@ Both were verified by reproducing them on hardware — the second by dirtying th
 That closes the last "never run" item from M2. Of the four M2 deliverables, every one has now failed at least once on contact with real hardware, and none of those failures was visible to review or to the test suite.
 
 Next: M4 — restarts and the reboot mechanism.
+
+## 2026-08-16 — M4 built: restarts, and a reboot mechanism that had to be redesigned
+
+Requirement 6 in full, plus requirement 5's last clause carried from M3. 266 tests, green. **Nothing here has run on hardware**; G3 is the check, and its list in `plan.md` has been rewritten to say what to look at.
+
+**The recorded reboot mechanism could not work, and one line showed it.**
+
+```
+$ setpriv --no-new-privs /usr/bin/sudo -n /bin/true
+sudo: The "no new privileges" flag is set, which prevents sudo from running as root.
+```
+
+`plan.md` committed to two things that contradict each other: `NoNewPrivileges=yes` on every unit, and a reboot triggered by `sudo systemctl start bbmon-reboot.service`. `NoNewPrivileges` makes the kernel ignore sudo's setuid bit, so the sudoers rule could never have fired. Both decisions were taken in the same document on the same day, and neither review nor the test suite had anything to say about the pair. G3 would have found it, at the cost of a home visit.
+
+The choice it forced was between the two. Keeping sudo meant dropping `NoNewPrivileges` from the pinger — the one service that feeds user-editable ping targets into a subprocess, and the worst place in the system to hand back access to every setuid binary on the machine. Keeping the sandbox meant giving up the "one fixed sudo command" shape.
+
+**What replaced it.** The unprivileged service writes `/var/lib/bbmon/reboot-now`; `bbmon-reboot.path` notices the write; systemd starts `bbmon-reboot.service`, which is root, runs two lines and none of bbmon's code. No bbmon process is privileged, none gains a privilege, and there is no sudoers file at all. The grant is narrower than the one it replaces rather than wider: sudo would have taken an argv, whereas the only thing bbmon can communicate here is *that* a file was written.
+
+**The failure mode that shaped the design is a Pi that reboots on sight of its own trigger.** It is unrecoverable without a keyboard at the machine, so it has three independent guards: `PathModified=` fires on a write rather than on the file being present, `bbmon-reboot.service` deletes the trigger before rebooting rather than after, and `bbmon-init` deletes any leftover on the way up before the watcher is ordered to start. The watcher also `Requires=bbmon-init.service`, so a Pi with a broken config cannot reboot itself. Both new units pass `systemd-analyze verify`, which is syntax, not behaviour.
+
+**Two files, not one, and the reason is that consumption has to be provable.** `reboot-requested` holds the reason and is read at the next startup; `reboot-now` is the trigger and is deleted immediately. The first draft used a single row in `restarts` as a pre-reboot marker, and it was wrong in a way worth recording: after one planned reboot, that row stays the newest `expected = true` row for ever, so the *next* power cut reads as planned too. Any scheme where the marker is not consumed has this bug. Writing exactly one row per boot, at boot, from a request file that is deleted as it is read, is what makes "was this restart ours?" answerable more than once.
+
+**A restart is timestamped when it was noticed**, not when the machine went down — the only honest option, since an unexpected restart is not observed while it happens.
+
+**Reboot due-ness is measured from uptime, not from the last restart row.** A power cut resets that clock as surely as a planned reboot does, and a Pi that came up ten minutes ago does not need rebooting whatever the table says. It also means the speed test service can answer requirement 5's "is a reboot imminent?" for itself, from the same configured interval and the same `/proc/uptime`, with no shared state and no message between the two processes.
+
+**The reboot check rides the ping loop** through a new `between_cycles` hook, rather than owning a systemd timer. Same reasoning `plan.md` already applied to the retention purge: one fewer unit, and a timer's schedule would have to be baked into a unit file instead of read from `reboot.interval_days`. The hook runs after the flush, so taking the machine down cannot lose buffered pings. M6's purge slots into the same hook.
+
+**A request that produces no reboot is now noticed.** Writing a file that nobody is watching succeeds exactly like one that works, so if `bbmon-reboot.path` is missing or inactive the only symptom would be a Pi that quietly never reboots. The scheduler therefore records when it asked, and if the machine is still up ten minutes later it warns and asks again. That is the same shape as the defects G1 found: the thing reports success while not working.
+
+**Requirement 5's skip needed no interface change**, which the M3 entry above doubted. The collector takes a `reboot_imminent` predicate and returns an empty sequence — already a legal return from `collect`. Nothing is recorded for a skipped test: it is not a failure, and a test killed by a reboot would put an outage on the chart where there was none.
+
+**The test suite was reading the development machine's uptime.** Adding the schedule made an existing end-to-end speed test fail, because the Chromebook had been up 3.8 days against a 3-day reboot interval — the test would have passed on a laptop rebooted that morning. `tests/conftest.py` now points `/proc/uptime` and the timesyncd runtime directory at fixtures for the whole suite. Worth recording because the test was not wrong when it was written; the code moved underneath it, and the failure was a real one rather than a hypothetical.
+
+**NTP.** The wait uses systemd-timesyncd's own marker, `/run/systemd/timesync/synchronized` — what `systemd-time-wait-sync` waits on — rather than inferring sync from anything. Only `bbmon-init` waits, because every other unit is ordered after it. `bbmon-init` is now also ordered after `systemd-timesyncd.service`: starting before timesyncd has created its runtime directory would make the wait read "nothing manages this clock" and skip, silently, exactly when it was most needed. The wait is bounded at 120s and says so when it gives up, because monitoring that never starts is worse than one questionable timestamp.
+
+**Not verified.** No reboot has been performed by this code, on any machine. The `PathModified=` semantics are read from the documentation and asserted in a unit test, not observed; the boot-loop guards are reasoning plus three belts, not evidence. The 120s NTP timeout has never met a Pi with no RTC. All of it is G3.
+
+Next: G3 — the reboot gate, which can be cleared on the same visit as G2. After that, M5.
