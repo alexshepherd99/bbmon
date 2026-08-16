@@ -18,13 +18,19 @@ from __future__ import annotations
 import logging
 import sys
 
-from bbmon import db
+from bbmon import db, reboot
 from bbmon.collectors.speedtest import SpeedtestCollector
 from bbmon.config import ConfigError, load
 from bbmon.db import DatabaseError
 from bbmon.service import FLUSH_EVERY_CYCLE, run_until_stopped
 
 logger = logging.getLogger(__name__)
+
+#: How close to a reboot a speed test is abandoned rather than started.
+#: A test takes 30–40s and is killed at 180s (see the collector's
+#: ``TIMEOUT_SECONDS``); five minutes covers the slowest run plus the time the
+#: machine takes to go down, without skipping tests that would have finished.
+SKIP_BEFORE_REBOOT_SECONDS = 300
 
 
 def main() -> int:
@@ -40,7 +46,16 @@ def main() -> int:
         logger.exception("The speed test service could not start")
         return 1
 
-    collector = SpeedtestCollector(interval_hours=config.speedtest_interval_hours)
+    collector = SpeedtestCollector(
+        interval_hours=config.speedtest_interval_hours,
+        # Requirement 5. Asked freshly each cycle, and answered from the
+        # configured interval and the machine's uptime — the same two things
+        # the pinger's schedule reads, so the two services agree on when the
+        # reboot is coming without sharing any state.
+        reboot_imminent=lambda: reboot.reboot_is_imminent(
+            config.reboot_interval_days, SKIP_BEFORE_REBOOT_SECONDS
+        ),
+    )
 
     logger.info(
         "Running a speed test now and every %dh, writing to %s",

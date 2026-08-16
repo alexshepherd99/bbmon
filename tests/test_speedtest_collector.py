@@ -184,3 +184,48 @@ def test_the_interval_is_reported_in_seconds() -> None:
 
 def test_the_collector_is_named_for_its_logs() -> None:
     assert collector(runner_returning(OOKLA_OUTPUT)).name == "speedtest"
+
+
+def test_a_test_is_skipped_when_a_reboot_is_imminent() -> None:
+    """Requirement 5's last clause, which had nowhere to live until M4.
+
+    A test started minutes before a reboot is a test that gets killed partway
+    through, and a killed test would be recorded as a failure — an outage on
+    the chart where there was none.
+    """
+    runner = runner_returning(OOKLA_OUTPUT)
+
+    results = SpeedtestCollector(
+        interval_hours=3, runner=runner, clock=lambda: NOW, reboot_imminent=lambda: True
+    ).collect()
+
+    assert results == []
+    assert not hasattr(runner, "argv"), "the binary should not have been run"
+
+
+def test_a_skipped_test_records_nothing() -> None:
+    """Deliberately not a failure row: nothing failed, and it is not a gap either.
+
+    The service runs a test on startup, so the reboot is followed by a real
+    measurement within a minute or two of coming back.
+    """
+    results = SpeedtestCollector(
+        interval_hours=3,
+        runner=runner_returning(OOKLA_OUTPUT),
+        clock=lambda: NOW,
+        reboot_imminent=lambda: True,
+    ).collect()
+
+    assert results == []
+
+
+def test_a_test_runs_normally_when_no_reboot_is_near() -> None:
+    results = SpeedtestCollector(
+        interval_hours=3,
+        runner=runner_returning(OOKLA_OUTPUT),
+        clock=lambda: NOW,
+        reboot_imminent=lambda: False,
+    ).collect()
+
+    assert len(results) == 1
+    assert results[0].success is True

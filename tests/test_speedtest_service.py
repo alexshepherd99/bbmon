@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from bbmon import db, speedtest
+from bbmon import db, reboot, speedtest
 from bbmon.service import FLUSH_EVERY_CYCLE
 
 CONFIG = """
@@ -67,6 +67,63 @@ def test_the_service_creates_the_database_before_collecting(
 
     with db.connect(tmp_path / "bbmon.db") as conn:
         assert db.latest_speedtest_result(conn) is None
+
+
+def test_the_collector_is_told_when_a_reboot_is_near(
+    config_file: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Requirement 5, wired to requirement 6's schedule with no shared state.
+
+    Both services read the same configured interval and the same uptime, so
+    the speed test reaches the same answer as the pinger without either
+    knowing about the other. Here the machine is one minute short of its
+    three-day reboot, so the run is skipped.
+    """
+    uptime = tmp_path / "uptime"
+    uptime.write_text(f"{3 * 86400 - 60} 0.0\n")
+    monkeypatch.setattr(reboot, "UPTIME_PATH", uptime)
+
+    captured = {}
+
+    def fake_run(collector, database_path, flush_interval_seconds):
+        captured["results"] = collector.collect()
+        return 0
+
+    monkeypatch.setattr(speedtest, "run_until_stopped", fake_run)
+
+    assert speedtest.main() == 0
+    assert captured["results"] == []
+
+
+def test_the_collector_runs_when_the_reboot_is_a_long_way_off(
+    config_file: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The other branch: the skip must not be permanently on."""
+    import subprocess
+
+    from bbmon.collectors import speedtest as collector_module
+
+    uptime = tmp_path / "uptime"
+    uptime.write_text("60.0 0.0\n")
+    monkeypatch.setattr(reboot, "UPTIME_PATH", uptime)
+    monkeypatch.setattr(
+        collector_module.subprocess,
+        "run",
+        lambda argv, **kwargs: subprocess.CompletedProcess(
+            argv, 0, json.dumps({"type": "result", "ping": {"latency": 11.0}}), ""
+        ),
+    )
+
+    captured = {}
+
+    def fake_run(collector, database_path, flush_interval_seconds):
+        captured["results"] = collector.collect()
+        return 0
+
+    monkeypatch.setattr(speedtest, "run_until_stopped", fake_run)
+
+    assert speedtest.main() == 0
+    assert len(captured["results"]) == 1
 
 
 def test_a_bad_config_exits_non_zero_rather_than_crashing(

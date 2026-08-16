@@ -152,6 +152,30 @@ def boot_time(now: datetime, uptime: float) -> datetime:
     return now - timedelta(seconds=uptime)
 
 
+def seconds_until_due(interval_days: int, uptime: float) -> float:
+    """How long until the periodic reboot is due; ``0`` once it is overdue."""
+    return max(0.0, interval_days * SECONDS_PER_DAY - uptime)
+
+
+def reboot_is_imminent(interval_days: int, within_seconds: float) -> bool:
+    """Whether a reboot is due within ``within_seconds``.
+
+    Requirement 5's "skip the speed test if a reboot is imminently due", asked
+    from a different process than the one that will do the rebooting. It needs
+    no shared state: both read the same configured interval and the same
+    uptime, so both reach the same answer.
+
+    An unreadable uptime answers "no". A speed test that gets killed by a
+    reboot costs one row; a speed test service that stops running costs the
+    measurement entirely.
+    """
+    try:
+        return seconds_until_due(interval_days, uptime_seconds()) <= within_seconds
+    except RebootError:
+        logger.exception("Could not tell whether a reboot is imminent; assuming not")
+        return False
+
+
 def record_startup(
     conn: sqlite3.Connection,
     request_path: str | Path,
@@ -333,7 +357,6 @@ class RebootScheduler:
             :func:`request_file_path`.
         :param uptime: Injection point for reading the machine's uptime.
         """
-        self._interval_seconds = interval_days * SECONDS_PER_DAY
         self._interval_days = interval_days
         self._action = action
         self._request_path = Path(request_path)
@@ -342,7 +365,7 @@ class RebootScheduler:
 
     def seconds_until_due(self) -> float:
         """How long until the periodic reboot is due; ``0`` once it is overdue."""
-        return max(0.0, self._interval_seconds - self._uptime())
+        return seconds_until_due(self._interval_days, self._uptime())
 
     def check(self) -> None:
         """Reboot if it is due. Safe to call as often as the caller likes.

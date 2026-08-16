@@ -64,6 +64,7 @@ class SpeedtestCollector(Collector):
         interval_hours: int,
         runner: Runner | None = None,
         clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
+        reboot_imminent: Callable[[], bool] = lambda: False,
     ) -> None:
         """
         :param interval_hours: How often the speed test runs, from configuration.
@@ -73,10 +74,16 @@ class SpeedtestCollector(Collector):
             than when this module is imported, so the boundary stays reachable
             for a service assembled by :func:`bbmon.speedtest.main`.
         :param clock: Injection point for the current time.
+        :param reboot_imminent: Whether the machine is about to reboot, for
+            requirement 5's last clause. A predicate rather than a value
+            because a cycle can be hours after the one before it. The default
+            says no, which is right for any collector built without a reboot
+            schedule to consult.
         """
         self._interval_hours = interval_hours
         self._runner = runner if runner is not None else subprocess.run
         self._clock = clock
+        self._reboot_imminent = reboot_imminent
 
     @property
     def name(self) -> str:
@@ -91,10 +98,19 @@ class SpeedtestCollector(Collector):
         """Run one speed test.
 
         Returns a single-element list because the collector interface is shaped
-        around the ping case, where one cycle measures several targets.
+        around the ping case, where one cycle measures several targets — or an
+        empty one when the run is skipped, which needed no interface change.
 
         :raises CollectorError: if the Ookla binary is not installed.
         """
+        if self._reboot_imminent():
+            # Requirement 5. Not recorded as a failure: nothing failed, and a
+            # killed test would put an outage on the chart where there was
+            # none. The service tests on startup, so a real measurement
+            # follows a minute or two after the machine comes back.
+            logger.info("Skipping the speed test: a reboot is due imminently")
+            return []
+
         # Every element is a constant: no configuration value reaches this
         # command line, so there is nothing here to inject into.
         argv = [BINARY, "--format=json", "--accept-license", "--accept-gdpr"]

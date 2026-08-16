@@ -20,21 +20,6 @@ def config_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     return path
 
 
-@pytest.fixture(autouse=True)
-def no_timesyncd(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Keep the clock wait out of the way, and off whatever the host runs."""
-    monkeypatch.setattr(timesync, "TIMESYNC_RUNTIME_DIR", tmp_path / "no-timesyncd")
-
-
-@pytest.fixture
-def uptime(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """Stand in for /proc/uptime: a machine up for two minutes."""
-    path = tmp_path / "uptime"
-    path.write_text("120.0 60.0\n")
-    monkeypatch.setattr(reboot, "UPTIME_PATH", path)
-    return path
-
-
 def test_it_creates_the_schema_at_the_configured_path(
     config_file: Path, tmp_path: Path
 ) -> None:
@@ -64,7 +49,7 @@ def test_running_it_twice_is_harmless(config_file: Path, tmp_path: Path) -> None
     assert init.main() == 0
 
 
-def test_it_records_the_restart(config_file: Path, uptime: Path, tmp_path: Path) -> None:
+def test_it_records_the_restart(config_file: Path, tmp_path: Path) -> None:
     """Requirement 6's check runs here, before any service is allowed to start."""
     assert init.main() == 0
 
@@ -76,7 +61,7 @@ def test_it_records_the_restart(config_file: Path, uptime: Path, tmp_path: Path)
 
 
 def test_it_records_a_requested_reboot_as_expected(
-    config_file: Path, uptime: Path, tmp_path: Path
+    config_file: Path, tmp_path: Path
 ) -> None:
     database = tmp_path / "nested" / "bbmon.db"
     database.parent.mkdir()
@@ -93,7 +78,7 @@ def test_it_records_a_requested_reboot_as_expected(
 
 
 def test_it_clears_a_reboot_trigger_left_over_from_the_last_boot(
-    config_file: Path, uptime: Path, tmp_path: Path
+    config_file: Path, tmp_path: Path
 ) -> None:
     """Otherwise the Pi could come up, notice its own trigger, and go down again."""
     database = tmp_path / "nested" / "bbmon.db"
@@ -111,7 +96,7 @@ def test_the_schema_still_gets_created_when_the_restart_cannot_be_recorded(
 ) -> None:
     """Every service Requires= this unit, so a diagnostic nicety must not fail it.
 
-    No uptime fixture here: /proc/uptime is pointed at a file that is not there.
+    Overrides the suite's fake /proc/uptime with a path that does not exist.
     """
     monkeypatch.setattr(reboot, "UPTIME_PATH", tmp_path / "absent")
 
@@ -123,7 +108,6 @@ def test_the_schema_still_gets_created_when_the_restart_cannot_be_recorded(
 
 def test_it_waits_for_the_clock_before_recording_anything(
     config_file: Path,
-    uptime: Path,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
