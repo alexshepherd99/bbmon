@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from bbmon import db, init
+from bbmon import db, init, reboot
 
 CONFIG = """
 database:
@@ -17,6 +17,15 @@ def config_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     path = tmp_path / "config.yaml"
     path.write_text(CONFIG.format(path=tmp_path / "nested" / "bbmon.db"))
     monkeypatch.setenv("BBMON_CONFIG", str(path))
+    return path
+
+
+@pytest.fixture
+def uptime(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Stand in for /proc/uptime: a machine up for two minutes."""
+    path = tmp_path / "uptime"
+    path.write_text("120.0 60.0\n")
+    monkeypatch.setattr(reboot, "UPTIME_PATH", path)
     return path
 
 
@@ -47,6 +56,49 @@ def test_running_it_twice_is_harmless(config_file: Path, tmp_path: Path) -> None
     """systemd re-runs a oneshot unit on every boot, so this is the normal path."""
     assert init.main() == 0
     assert init.main() == 0
+
+
+def test_it_records_the_restart(config_file: Path, uptime: Path, tmp_path: Path) -> None:
+    """Requirement 6's check runs here, before any service is allowed to start."""
+    assert init.main() == 0
+
+    with db.connect(tmp_path / "nested" / "bbmon.db") as conn:
+        recorded = db.latest_restart(conn)
+
+    assert recorded is not None
+    assert recorded.expected is False
+
+
+def test_it_records_a_requested_reboot_as_expected(
+    config_file: Path, uptime: Path, tmp_path: Path
+) -> None:
+    database = tmp_path / "nested" / "bbmon.db"
+    database.parent.mkdir()
+    reboot.request_file_path(database).write_text("scheduled reboot after 3 days")
+
+    assert init.main() == 0
+
+    with db.connect(database) as conn:
+        recorded = db.latest_restart(conn)
+
+    assert recorded is not None
+    assert recorded.expected is True
+    assert recorded.reason == "scheduled reboot after 3 days"
+
+
+def test_the_schema_still_gets_created_when_the_restart_cannot_be_recorded(
+    config_file: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Every service Requires= this unit, so a diagnostic nicety must not fail it.
+
+    No uptime fixture here: /proc/uptime is pointed at a file that is not there.
+    """
+    monkeypatch.setattr(reboot, "UPTIME_PATH", tmp_path / "absent")
+
+    assert init.main() == 0
+
+    with db.connect(tmp_path / "nested" / "bbmon.db") as conn:
+        assert db.latest_restart(conn) is None
 
 
 def test_a_bad_config_exits_non_zero_rather_than_crashing(

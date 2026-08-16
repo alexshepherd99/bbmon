@@ -16,10 +16,12 @@ from __future__ import annotations
 
 import logging
 import sys
+from datetime import datetime, timezone
 
-from bbmon import db
-from bbmon.config import ConfigError, load
+from bbmon import db, reboot
+from bbmon.config import Config, ConfigError, load
 from bbmon.db import DatabaseError
+from bbmon.reboot import RebootError
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +48,33 @@ def main() -> int:
         config.database_path,
         db.SCHEMA_VERSION,
     )
+
+    _record_restart(config)
     return 0
+
+
+def _record_restart(config: Config) -> None:
+    """Record this boot, per requirement 6.
+
+    This unit is where the check belongs: every other unit is ordered after it,
+    so the restart is recorded exactly once per boot rather than once per
+    service, and it is recorded before any measurement is written.
+
+    A failure here is logged and swallowed. The unit's job is the schema, and
+    everything else ``Requires=`` it — taking the whole system down because
+    the uptime could not be read would cost more than the missing row.
+    """
+    now = datetime.now(timezone.utc)
+    try:
+        with db.connect(config.database_path) as conn:
+            reboot.record_startup(
+                conn,
+                reboot.request_file_path(config.database_path),
+                boot_time=reboot.boot_time(now=now, uptime=reboot.uptime_seconds()),
+                now=now,
+            )
+    except (RebootError, DatabaseError):
+        logger.exception("This restart could not be recorded")
 
 
 if __name__ == "__main__":
