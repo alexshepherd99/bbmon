@@ -18,7 +18,7 @@ import logging
 import sys
 from datetime import datetime, timezone
 
-from bbmon import db, reboot
+from bbmon import db, reboot, timesync
 from bbmon.config import Config, ConfigError, load
 from bbmon.db import DatabaseError
 from bbmon.reboot import RebootError
@@ -48,6 +48,12 @@ def main() -> int:
         config.database_path,
         db.SCHEMA_VERSION,
     )
+
+    # Requirement 6, and the reason this wait is here rather than in each
+    # service: the restart row below is the boot's first timestamped write, and
+    # every other unit is ordered after this one, so waiting once covers them
+    # all. On a Pi with no RTC the clock before this point is fiction.
+    timesync.wait_for_synchronised()
 
     _record_restart(config)
     return 0

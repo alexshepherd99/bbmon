@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from bbmon import db, init, reboot
+from bbmon import db, init, reboot, timesync
 
 CONFIG = """
 database:
@@ -18,6 +18,12 @@ def config_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     path.write_text(CONFIG.format(path=tmp_path / "nested" / "bbmon.db"))
     monkeypatch.setenv("BBMON_CONFIG", str(path))
     return path
+
+
+@pytest.fixture(autouse=True)
+def no_timesyncd(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep the clock wait out of the way, and off whatever the host runs."""
+    monkeypatch.setattr(timesync, "TIMESYNC_RUNTIME_DIR", tmp_path / "no-timesyncd")
 
 
 @pytest.fixture
@@ -99,6 +105,29 @@ def test_the_schema_still_gets_created_when_the_restart_cannot_be_recorded(
 
     with db.connect(tmp_path / "nested" / "bbmon.db") as conn:
         assert db.latest_restart(conn) is None
+
+
+def test_it_waits_for_the_clock_before_recording_anything(
+    config_file: Path,
+    uptime: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Requirement 6: the boot's first write waits on NTP.
+
+    timesyncd is made to look present but unsynchronised, so the wait runs and
+    times out. The warning is the evidence that it ran at all — every unit is
+    ordered after this one, so this is where the whole system waits.
+    """
+    runtime_dir = tmp_path / "timesync"
+    runtime_dir.mkdir()
+    monkeypatch.setattr(timesync, "TIMESYNC_RUNTIME_DIR", runtime_dir)
+    monkeypatch.setattr(timesync, "DEFAULT_TIMEOUT_SECONDS", 0)
+
+    assert init.main() == 0
+
+    assert "not synchronised" in caplog.text
 
 
 def test_a_bad_config_exits_non_zero_rather_than_crashing(

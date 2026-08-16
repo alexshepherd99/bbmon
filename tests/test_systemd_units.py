@@ -90,6 +90,18 @@ def test_every_service_depends_on_the_init_step(name: str) -> None:
     assert "bbmon-init.service" in unit.get("After", "")
 
 
+def test_the_init_unit_starts_after_the_clock_is_managed() -> None:
+    """The NTP wait in bbmon.timesync reads a directory timesyncd creates.
+
+    Start before timesyncd and that directory is absent, which the wait treats
+    as "no time sync on this machine" — so it skips, silently, exactly when it
+    was most needed.
+    """
+    after = read_unit("bbmon-init.service")["Unit"].get("After", "")
+    assert "systemd-timesyncd.service" in after
+    assert "time-sync.target" in after
+
+
 def test_the_init_unit_stays_active_once_it_has_run() -> None:
     """A oneshot without RemainAfterExit reads as inactive, so Requires= restarts it."""
     service = read_unit("bbmon-init.service")["Service"]

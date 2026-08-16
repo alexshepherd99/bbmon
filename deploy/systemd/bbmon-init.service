@@ -4,7 +4,13 @@ Documentation=https://github.com/alexshepherd99/bbmon
 # Requirement 3: the schema exists before any service starts. Every other
 # bbmon unit is ordered After= this one and Requires= it, so a failure here
 # stops the others rather than letting three services race to create tables.
-After=local-fs.target
+#
+# Requirement 6: this unit performs the boot's first timestamped write, and it
+# waits for the clock before doing so. Ordering after systemd-timesyncd.service
+# is what makes that wait meaningful — without it this unit can start before
+# timesyncd has created /run/systemd/timesync, and bbmon.timesync would read
+# the missing directory as "nothing manages this clock" and not wait at all.
+After=local-fs.target time-sync.target systemd-timesyncd.service
 Before=bbmon-pinger.service bbmon-speedtest.service bbmon-web.service
 
 [Service]
