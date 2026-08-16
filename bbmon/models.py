@@ -21,6 +21,22 @@ class PingResult:
 
 
 @dataclass(frozen=True)
+class Restart:
+    """One restart of the machine.
+
+    ``expected`` distinguishes a reboot bbmon asked for from one it merely
+    noticed afterwards — a power cut, a crash, or someone typing ``reboot``.
+    An expected restart is recorded before the reboot happens; an unexpected
+    one can only be recorded on the way back up, so its timestamp is when the
+    machine came back, not when it went down.
+    """
+
+    timestamp: datetime
+    expected: bool
+    reason: str | None
+
+
+@dataclass(frozen=True)
 class SpeedtestResult:
     """One completed speed test.
 

@@ -16,7 +16,7 @@ from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 
-from bbmon.models import PingResult, SpeedtestResult
+from bbmon.models import PingResult, Restart, SpeedtestResult
 
 logger = logging.getLogger(__name__)
 
@@ -225,6 +225,52 @@ def latest_speedtest_result(conn: sqlite3.Connection) -> SpeedtestResult | None:
         isp=isp,
         server=server,
         success=bool(success),
+    )
+
+
+def insert_restart(conn: sqlite3.Connection, restart: Restart) -> None:
+    """Record one restart.
+
+    Singular where the result inserts are batched: restarts arrive one at a
+    time, minutes or days apart, and the expected ones are written immediately
+    before a reboot — the one write in this application that has no next
+    opportunity to retry.
+    """
+    try:
+        conn.execute(
+            "INSERT INTO restarts (timestamp, expected, reason) VALUES (?, ?, ?)",
+            (restart.timestamp.isoformat(), int(restart.expected), restart.reason),
+        )
+        conn.commit()
+    except sqlite3.Error as error:
+        logger.error("Could not record a restart: %s", error)
+        raise DatabaseError(f"Could not record a restart: {error}")
+
+
+def latest_restart(conn: sqlite3.Connection) -> Restart | None:
+    """Return the most recently recorded restart, or ``None`` if there is none.
+
+    By timestamp rather than insertion order, because the startup check asks
+    whether anything was recorded since the machine booted and an out-of-order
+    row would otherwise answer for a different boot.
+    """
+    try:
+        row = conn.execute(
+            "SELECT timestamp, expected, reason FROM restarts "
+            "ORDER BY timestamp DESC LIMIT 1"
+        ).fetchone()
+    except sqlite3.Error as error:
+        logger.error("Could not read the latest restart: %s", error)
+        raise DatabaseError(f"Could not read the latest restart: {error}")
+
+    if row is None:
+        return None
+
+    timestamp, expected, reason = row
+    return Restart(
+        timestamp=datetime.fromisoformat(timestamp),
+        expected=bool(expected),
+        reason=reason,
     )
 
 
