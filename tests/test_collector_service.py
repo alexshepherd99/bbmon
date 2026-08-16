@@ -203,6 +203,40 @@ def test_a_stop_requested_mid_sleep_ends_the_loop_and_still_flushes(
     assert row_count(database) == 1
 
 
+def test_work_sharing_the_loop_runs_once_a_cycle(database: Path) -> None:
+    """M4 hangs the reboot due-check here rather than on a systemd timer of its own."""
+    clock = FakeClock()
+    calls = []
+
+    CollectorService(
+        collector=FakeCollector(interval_seconds=5),
+        database_path=database,
+        flush_interval_seconds=60,
+        sleep=clock.sleep,
+        monotonic=clock,
+        between_cycles=lambda: calls.append(clock.seconds),
+    ).run(stop_after(4))
+
+    assert len(calls) == 4
+
+
+def test_work_sharing_the_loop_runs_after_the_flush(database: Path) -> None:
+    """The reboot check can take the machine down, so nothing may still be buffered."""
+    clock = FakeClock()
+    rows_seen = []
+
+    CollectorService(
+        collector=FakeCollector(interval_seconds=5),
+        database_path=database,
+        flush_interval_seconds=0,
+        sleep=clock.sleep,
+        monotonic=clock,
+        between_cycles=lambda: rows_seen.append(row_count(database)),
+    ).run(stop_after(2))
+
+    assert rows_seen == [1, 2]
+
+
 def test_the_loop_sleeps_for_the_collector_interval(database: Path) -> None:
     clock = FakeClock()
     collector = FakeCollector(interval_seconds=7)

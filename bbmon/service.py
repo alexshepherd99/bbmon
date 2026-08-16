@@ -51,6 +51,7 @@ class CollectorService:
         flush_interval_seconds: int = FLUSH_INTERVAL_SECONDS,
         sleep: Callable[[float], None] = time.sleep,
         monotonic: Callable[[], float] = time.monotonic,
+        between_cycles: Callable[[], None] = lambda: None,
     ) -> None:
         """
         :param collector: The measurement to run each cycle.
@@ -60,12 +61,18 @@ class CollectorService:
         :param sleep: Injection point for waiting between cycles.
         :param monotonic: Injection point for elapsed-time measurement. Monotonic
             rather than wall-clock, so an NTP step cannot skip or stall a flush.
+        :param between_cycles: Periodic work that shares this loop rather than
+            owning a systemd timer of its own — M4's reboot due-check, and the
+            retention purge at M6. Called once a cycle, after the flush, so it
+            may take the machine down without losing buffered results. It must
+            decide for itself whether it is due, and must not raise.
         """
         self._collector = collector
         self._database_path = Path(database_path)
         self._flush_interval_seconds = flush_interval_seconds
         self._sleep = sleep
         self._monotonic = monotonic
+        self._between_cycles = between_cycles
         self.max_buffered_results = MAX_BUFFERED_RESULTS
         self.buffer: list[Any] = []
 
@@ -89,6 +96,7 @@ class CollectorService:
                 if self._monotonic() - last_flush >= self._flush_interval_seconds:
                     self._flush()
                     last_flush = self._monotonic()
+                self._between_cycles()
                 self._sleep(self._collector.interval_seconds)
         finally:
             if flush_on_exit:
@@ -137,6 +145,7 @@ def run_until_stopped(
     collector: Collector,
     database_path: str | Path,
     flush_interval_seconds: int = FLUSH_INTERVAL_SECONDS,
+    between_cycles: Callable[[], None] = lambda: None,
 ) -> int:
     """Run ``collector`` until the service is asked to stop, and report an exit code.
 
@@ -164,6 +173,7 @@ def run_until_stopped(
         # not left waiting out the rest of the collector's interval — which for
         # the speed test is measured in hours.
         sleep=stopping.wait,
+        between_cycles=between_cycles,
     )
 
     try:
