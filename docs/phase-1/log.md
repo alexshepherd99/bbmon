@@ -332,6 +332,14 @@ The choice it forced was between the two. Keeping sudo meant dropping `NoNewPriv
 
 **NTP.** The wait uses systemd-timesyncd's own marker, `/run/systemd/timesync/synchronized` — what `systemd-time-wait-sync` waits on — rather than inferring sync from anything. Only `bbmon-init` waits, because every other unit is ordered after it. `bbmon-init` is now also ordered after `systemd-timesyncd.service`: starting before timesyncd has created its runtime directory would make the wait read "nothing manages this clock" and skip, silently, exactly when it was most needed. The wait is bounded at 120s and says so when it gives up, because monitoring that never starts is worse than one questionable timestamp.
 
-**Not verified.** No reboot has been performed by this code, on any machine. The `PathModified=` semantics are read from the documentation and asserted in a unit test, not observed; the boot-loop guards are reasoning plus three belts, not evidence. The 120s NTP timeout has never met a Pi with no RTC. All of it is G3.
+**The `PathModified=` assumption was tested rather than trusted.** The whole boot-loop argument rests on a claim about systemd, so a throwaway user-level pair of units — same directives, a harmless `ExecStart` — was run on Crostini's systemd 252:
+
+- trigger file already present when the watcher starts: **did not fire** (this is the boot-loop case);
+- a write to that same existing file: **fired**;
+- `ExecStartPre` deleted the trigger and the watcher re-armed: a second write fired again.
+
+That is the mechanism, and it behaves as designed. What it is not is a test of bbmon's actual units, which name root-owned paths and were only checked with `systemd-analyze verify`; and Raspberry Pi OS trixie ships a later systemd than 252.
+
+**Not verified.** No reboot has been performed by this code, on any machine. The boot-loop guards are three belts and an argument, with only the systemd behaviour underneath them measured. The 120s NTP timeout has never met a Pi with no RTC. The rest was run for real on Crostini: `bbmon-init` recorded an unexpected restart on a fresh database, added nothing on a second run in the same boot, and recorded `expected = true` with the right reason when a request file was left behind; the pinger — on a Chromebook 3.8 days up against a 3-day interval — asked for a reboot once, wrote the reason, and wrote the trigger only when `BBMON_REBOOT=systemd` was set.
 
 Next: G3 — the reboot gate, which can be cleared on the same visit as G2. After that, M5.
