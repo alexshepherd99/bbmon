@@ -9,7 +9,11 @@ Wants=network-online.target
 Type=simple
 User=bbmon
 Group=bbmon
-Environment=BBMON_CONFIG=/etc/bbmon/config.yaml
+# BBMON_REBOOT=systemd is what turns requirement 6's periodic reboot on: the
+# schedule runs inside the ping loop (see bbmon/pinger.py) and writes the file
+# bbmon-reboot.path watches. The default everywhere else is a no-op, so a
+# development machine cannot reboot itself.
+Environment="BBMON_CONFIG=/etc/bbmon/config.yaml" "BBMON_REBOOT=systemd"
 ExecStart=/opt/bbmon/.venv/bin/python -m bbmon.pinger
 
 # Requirement 10: a crashed collector recovers on its own.

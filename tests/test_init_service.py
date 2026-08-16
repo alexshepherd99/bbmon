@@ -92,6 +92,20 @@ def test_it_records_a_requested_reboot_as_expected(
     assert recorded.reason == "scheduled reboot after 3 days"
 
 
+def test_it_clears_a_reboot_trigger_left_over_from_the_last_boot(
+    config_file: Path, uptime: Path, tmp_path: Path
+) -> None:
+    """Otherwise the Pi could come up, notice its own trigger, and go down again."""
+    database = tmp_path / "nested" / "bbmon.db"
+    database.parent.mkdir()
+    trigger = reboot.trigger_file_path(database)
+    trigger.write_text("")
+
+    assert init.main() == 0
+
+    assert not trigger.exists()
+
+
 def test_the_schema_still_gets_created_when_the_restart_cannot_be_recorded(
     config_file: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

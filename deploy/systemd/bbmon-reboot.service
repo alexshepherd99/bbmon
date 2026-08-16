@@ -1,0 +1,32 @@
+[Unit]
+Description=bbmon reboot
+Documentation=https://github.com/alexshepherd99/bbmon
+# The only privileged thing bbmon installs. Starting it reboots the machine.
+#
+# There is deliberately no [Install] section: this unit is started by
+# bbmon-reboot.path, never enabled. Enabled, it would reboot the Pi on every
+# boot, for ever.
+#
+# It runs as root because rebooting needs root, and it runs none of bbmon's
+# code — no User=bbmon, no config, no database. The restarts row is written
+# before this unit is ever started, by the unprivileged service that decided
+# to reboot, so nothing here touches /var/lib/bbmon as root except to delete
+# the trigger below.
+#
+# plan.md recorded "sudo systemctl start bbmon-reboot.service" as the way this
+# unit would be started. That cannot work: NoNewPrivileges=yes on every bbmon
+# unit makes the kernel ignore sudo's setuid bit, and sudo refuses to run.
+# Hence the path unit, which needs no privilege on the calling side at all.
+
+[Service]
+Type=oneshot
+
+# Delete the trigger before rebooting, not after: after does not happen. A
+# trigger surviving the reboot is the one thing that could put the Pi in a
+# loop, and bbmon-init deletes it on the way up as well.
+ExecStartPre=/bin/rm -f /var/lib/bbmon/reboot-now
+
+# --no-block because the reboot transaction stops this unit as part of itself.
+# Without it, systemctl waits for a job that cannot finish until this unit
+# exits, and the unit cannot exit until systemctl returns.
+ExecStart=/usr/bin/systemctl --no-block reboot

@@ -16,6 +16,13 @@ excuse every power cut that followed it.
 The row is therefore written when the machine comes *back*, not when it went
 away, which is the only timestamp a restart record can honestly carry: an
 unexpected restart is by definition not observed while it happens.
+
+**How the reboot happens.** Two files in the state directory, each with one
+job. ``reboot-requested`` holds the reason and is read by the next startup.
+``reboot-now`` is the trigger: ``bbmon-reboot.path`` watches it, and a write
+makes systemd start ``bbmon-reboot.service``, which reboots. No bbmon process
+is privileged and none gains a privilege — see :class:`SystemdPathReboot` for
+why the sudo route recorded in ``plan.md`` turned out to be impossible.
 """
 
 from __future__ import annotations
@@ -23,7 +30,6 @@ from __future__ import annotations
 import logging
 import os
 import sqlite3
-import subprocess
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Mapping
 from datetime import datetime, timedelta
@@ -36,6 +42,12 @@ logger = logging.getLogger(__name__)
 
 SECONDS_PER_DAY = 86400
 
+#: How long to wait for a requested reboot to actually happen before asking
+#: again and saying so. Generous — a Pi 3 takes well under a minute to go down
+#: — because the point is to notice a reboot that is never coming, not to
+#: hurry one along.
+REBOOT_RETRY_SECONDS = 600
+
 #: Linux exposes seconds-since-boot here, as "<uptime> <idle>".
 UPTIME_PATH = Path("/proc/uptime")
 
@@ -44,12 +56,17 @@ UPTIME_PATH = Path("/proc/uptime")
 #: line in every unit.
 REBOOT_REQUEST_FILENAME = "reboot-requested"
 
+#: The file ``bbmon-reboot.path`` watches. Writing it is how an unprivileged
+#: service asks systemd to reboot the machine. Kept separate from the request
+#: file above, which is a record rather than a trigger and outlives the reboot.
+REBOOT_TRIGGER_FILENAME = "reboot-now"
+
 #: Chooses the reboot implementation. Unset means the no-op, so a development
 #: machine cannot reboot itself by accident; the Pi's units opt in explicitly.
 REBOOT_ACTION_ENV_VAR = "BBMON_REBOOT"
 
 _ACTION_NOOP = "noop"
-_ACTION_SYSTEMCTL = "systemctl"
+_ACTION_SYSTEMD = "systemd"
 
 _UNEXPECTED_REASON = "no reboot was requested before the machine went down"
 _UNEXPLAINED_REASON = "requested by bbmon"
@@ -67,6 +84,42 @@ def request_file_path(database_path: str | Path) -> Path:
     would only be a way for them to disagree.
     """
     return Path(database_path).parent / REBOOT_REQUEST_FILENAME
+
+
+def trigger_file_path(database_path: str | Path) -> Path:
+    """Where the reboot trigger lives, given the configured database.
+
+    In the same state directory and for the same reason as
+    :func:`request_file_path`: it is the only path the units leave writable.
+    """
+    return Path(database_path).parent / REBOOT_TRIGGER_FILENAME
+
+
+def clear_trigger(trigger_path: str | Path) -> None:
+    """Remove a reboot trigger left over from a reboot that already happened.
+
+    Belt and braces against the one catastrophic failure this mechanism could
+    have: a Pi that reboots, comes up, sees its own trigger and reboots again.
+    ``bbmon-reboot.path`` watches for a *write*, so a file that is merely
+    present should not fire it, and ``bbmon-reboot.service`` deletes the
+    trigger before rebooting anyway — but "should not" is doing a lot of work
+    in that sentence for a machine that is not in the room, and this costs one
+    unlink per boot.
+
+    Called from ``bbmon-init``, which every other unit is ordered after.
+    """
+    trigger_path = Path(trigger_path)
+    try:
+        existed = trigger_path.exists()
+        trigger_path.unlink(missing_ok=True)
+    except OSError as error:
+        logger.error(
+            "Could not remove a stale reboot trigger %s: %s", trigger_path, error
+        )
+        return
+
+    if existed:
+        logger.warning("Removed a reboot trigger left over from before this boot")
 
 
 def uptime_seconds(path: str | Path | None = None) -> float:
@@ -160,65 +213,56 @@ class NoOpReboot(RebootAction):
             "A reboot was requested, but the no-op reboot action is in use, so "
             "nothing will happen. Set %s=%s to reboot for real.",
             REBOOT_ACTION_ENV_VAR,
-            _ACTION_SYSTEMCTL,
+            _ACTION_SYSTEMD,
         )
 
 
-class SystemctlReboot(RebootAction):
-    """The Pi implementation: one fixed command through a narrow sudoers rule.
+class SystemdPathReboot(RebootAction):
+    """The Pi implementation: touch a file systemd is watching.
 
-    ``plan.md``'s security posture allows exactly this — an argv list, no
-    shell, no wildcard, and not one character of it derived from configuration
-    or from anything a web request could reach. ``deploy/sudoers.d/bbmon``
-    grants the ``bbmon`` user this command and nothing else, so the sudoers
-    entry and this tuple have to stay character-for-character identical.
+    Nothing in bbmon runs as root and nothing in bbmon gains a privilege. The
+    only thing that can reboot this machine is ``bbmon-reboot.service``, a root
+    unit owning two lines, and the only thing that can start it is
+    ``bbmon-reboot.path``, which watches for a write to this one file inside
+    the state directory the services can already write to.
+
+    The rejected alternative was ``sudo systemctl start bbmon-reboot.service``,
+    which ``plan.md`` recorded as the mechanism. It cannot work: every unit
+    sets ``NoNewPrivileges=yes``, which makes the kernel ignore sudo's setuid
+    bit, so sudo refuses to run at all. Keeping the sudoers rule would have
+    meant dropping that directive from the one service that feeds
+    user-editable ping targets into a subprocess.
     """
 
-    COMMAND = (
-        "/usr/bin/sudo",
-        "-n",
-        "/usr/bin/systemctl",
-        "start",
-        "bbmon-reboot.service",
-    )
-
-    def __init__(self, run: Callable[..., subprocess.CompletedProcess] = subprocess.run):
-        """:param run: Injection point for the one subprocess call."""
-        self._run = run
+    def __init__(self, trigger_path: str | Path) -> None:
+        """:param trigger_path: The file ``bbmon-reboot.path`` watches."""
+        self._trigger_path = Path(trigger_path)
 
     def reboot(self) -> None:
         try:
-            completed = self._run(
-                list(self.COMMAND),
-                capture_output=True,
-                text=True,
-                timeout=30,
-                check=False,
-            )
-        except (OSError, subprocess.SubprocessError) as error:
-            logger.error("Could not run %s: %s", " ".join(self.COMMAND), error)
-            raise RebootError(f"Could not run {' '.join(self.COMMAND)}: {error}")
-
-        if completed.returncode != 0:
+            self._trigger_path.write_text("")
+        except OSError as error:
             logger.error(
-                "%s exited %d: %s",
-                " ".join(self.COMMAND),
-                completed.returncode,
-                completed.stderr.strip(),
+                "Could not write the reboot trigger %s: %s", self._trigger_path, error
             )
             raise RebootError(
-                f"{' '.join(self.COMMAND)} exited {completed.returncode}: "
-                f"{completed.stderr.strip()}"
+                f"Could not write the reboot trigger {self._trigger_path}: {error}"
             )
 
-        logger.info("The machine has been asked to reboot")
+        logger.info(
+            "Wrote %s; systemd should now start bbmon-reboot.service",
+            self._trigger_path,
+        )
 
 
 def action_from_environment(
+    trigger_path: str | Path,
     environ: Mapping[str, str] | None = None,
 ) -> RebootAction:
     """Pick the reboot implementation named by ``BBMON_REBOOT``.
 
+    :param trigger_path: Where the systemd implementation writes, from
+        :func:`trigger_file_path`. Ignored by the no-op.
     :raises RebootError: for an unrecognised value. A typo in a unit file
         would otherwise disable rebooting for good, and look like nothing.
     """
@@ -228,12 +272,12 @@ def action_from_environment(
     setting = environ.get(REBOOT_ACTION_ENV_VAR, _ACTION_NOOP).strip().lower()
     if setting == _ACTION_NOOP:
         return NoOpReboot()
-    if setting == _ACTION_SYSTEMCTL:
-        return SystemctlReboot()
+    if setting == _ACTION_SYSTEMD:
+        return SystemdPathReboot(trigger_path)
 
     raise RebootError(
         f"{REBOOT_ACTION_ENV_VAR}={setting!r} is not a reboot action; "
-        f"expected {_ACTION_NOOP!r} or {_ACTION_SYSTEMCTL!r}"
+        f"expected {_ACTION_NOOP!r} or {_ACTION_SYSTEMD!r}"
     )
 
 
@@ -294,7 +338,7 @@ class RebootScheduler:
         self._action = action
         self._request_path = Path(request_path)
         self._uptime = uptime
-        self._requested = False
+        self._requested_at: float | None = None
 
     def seconds_until_due(self) -> float:
         """How long until the periodic reboot is due; ``0`` once it is overdue."""
@@ -307,10 +351,9 @@ class RebootScheduler:
         measuring because it could not reboot has failed at the more important
         job of the two.
         """
-        if self._requested:
-            return
-
         try:
+            if self._waiting_to_go_down():
+                return
             if self.seconds_until_due() > 0:
                 return
             request_reboot(
@@ -320,11 +363,37 @@ class RebootScheduler:
             )
         except RebootError:
             # Retried on the next cycle rather than latched off: a one-off
-            # sudo failure should not disable rebooting until the next boot.
+            # write failure should not disable rebooting until the next boot.
             logger.exception("The scheduled reboot could not be started")
             return
 
-        self._requested = True
+        self._requested_at = self._uptime()
+
+    def _waiting_to_go_down(self) -> bool:
+        """Whether a reboot has been asked for and is still plausibly coming.
+
+        A reboot takes a minute; this loop runs every few seconds, so without
+        this the request would be repeated a dozen times on the way down.
+
+        The wait is bounded because the request is a file write, and a write
+        that nobody is watching succeeds exactly like one that works — if the
+        path unit is not installed or not running, the only symptom is a Pi
+        that never reboots. After :data:`REBOOT_RETRY_SECONDS` still up, say
+        so and ask again.
+        """
+        if self._requested_at is None:
+            return False
+
+        if self._uptime() - self._requested_at < REBOOT_RETRY_SECONDS:
+            return True
+
+        logger.warning(
+            "A reboot was requested %gs ago and this machine is still up; "
+            "asking again. Check that bbmon-reboot.path is enabled and active.",
+            self._uptime() - self._requested_at,
+        )
+        self._requested_at = None
+        return False
 
 
 def _consume_request(request_path: Path) -> tuple[bool, str]:

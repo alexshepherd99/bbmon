@@ -1,0 +1,24 @@
+[Unit]
+Description=bbmon reboot request watch
+Documentation=https://github.com/alexshepherd99/bbmon
+# How an unprivileged bbmon service asks for a reboot: it writes
+# /var/lib/bbmon/reboot-now, and systemd — not bbmon — starts the root unit
+# that reboots. No setuid binary, no sudoers rule, and NoNewPrivileges=yes
+# stays on every unit that runs bbmon's code.
+#
+# Requires= bbmon-init.service so that a Pi whose configuration is broken
+# cannot reboot itself, and After= it so that a trigger left over from the
+# reboot that produced this boot has already been deleted before anything is
+# watching for it.
+Requires=bbmon-init.service
+After=bbmon-init.service
+
+[Path]
+# PathModified=, not PathExists=. PathExists= fires when the unit starts and
+# the file is already there, which for a reboot trigger means a boot loop.
+# PathModified= fires on a write, which is exactly the act of asking.
+PathModified=/var/lib/bbmon/reboot-now
+Unit=bbmon-reboot.service
+
+[Install]
+WantedBy=multi-user.target

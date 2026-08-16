@@ -14,6 +14,8 @@ from pathlib import Path
 
 import pytest
 
+from bbmon.reboot import trigger_file_path
+
 UNIT_DIR = Path(__file__).resolve().parent.parent / "deploy" / "systemd"
 
 #: The sandboxing plan.md commits to for every collector/web unit, and the
@@ -31,7 +33,18 @@ LONG_RUNNING_UNITS = [
     "bbmon-speedtest.service",
     "bbmon-web.service",
 ]
+
+#: The four units that run bbmon's own code as the bbmon user. The reboot unit
+#: below is deliberately not one of them — it runs as root and runs no Python,
+#: so the directives above are either meaningless or wrong for it.
 ALL_UNITS = ["bbmon-init.service"] + LONG_RUNNING_UNITS
+
+REBOOT_UNIT = "bbmon-reboot.service"
+REBOOT_PATH_UNIT = "bbmon-reboot.path"
+
+#: The file the unprivileged services write to ask for a reboot. Both units
+#: name it literally, and bbmon.reboot derives it from the configured database.
+TRIGGER_FILE = "/var/lib/bbmon/reboot-now"
 
 
 def read_unit(name: str) -> configparser.ConfigParser:
@@ -44,7 +57,7 @@ def read_unit(name: str) -> configparser.ConfigParser:
 
 
 def test_every_unit_file_is_present() -> None:
-    for name in ALL_UNITS:
+    for name in ALL_UNITS + [REBOOT_UNIT, REBOOT_PATH_UNIT]:
         assert (UNIT_DIR / name).is_file(), f"{name} is missing"
 
 
@@ -119,4 +132,92 @@ def test_collectors_are_given_time_to_flush_on_stop(name: str) -> None:
 @pytest.mark.parametrize("name", ALL_UNITS)
 def test_units_state_their_config_path_explicitly(name: str) -> None:
     service = read_unit(name)["Service"]
-    assert service.get("Environment") == "BBMON_CONFIG=/etc/bbmon/config.yaml"
+    assert "BBMON_CONFIG=/etc/bbmon/config.yaml" in service.get("Environment", "")
+
+
+def test_the_pinger_is_the_service_allowed_to_reboot() -> None:
+    """Requirement 6's schedule runs in the ping loop, so it needs the real action.
+
+    Left to its default the pinger would use the no-op, and a Pi that reports
+    itself healthy would simply never reboot.
+    """
+    service = read_unit("bbmon-pinger.service")["Service"]
+    assert "BBMON_REBOOT=systemd" in service.get("Environment", "")
+
+
+@pytest.mark.parametrize("name", ["bbmon-speedtest.service", "bbmon-web.service"])
+def test_no_other_service_is_given_the_real_reboot_action(name: str) -> None:
+    """The web app gets it at M6, with the button; nothing needs it before then."""
+    assert "BBMON_REBOOT" not in read_unit(name)["Service"].get("Environment", "")
+
+
+def test_the_reboot_unit_is_never_enabled() -> None:
+    """It reboots the machine when started, so a WantedBy= would be a boot loop."""
+    parser = read_unit(REBOOT_UNIT)
+    assert "Install" not in parser, (
+        "an [Install] section would let systemctl enable bbmon-reboot.service, "
+        "which would reboot the Pi on every boot, for ever"
+    )
+
+
+def test_the_reboot_unit_runs_one_command_and_nothing_of_ours() -> None:
+    """The only privileged thing bbmon installs. It stays this small on purpose."""
+    service = read_unit(REBOOT_UNIT)["Service"]
+
+    assert service.get("Type") == "oneshot"
+    assert service.get("ExecStart") == "/usr/bin/systemctl --no-block reboot"
+    assert "ExecStartPost" not in service
+    assert ".venv" not in service.get("ExecStart", "")
+
+
+def test_the_reboot_unit_clears_its_trigger_before_going_down() -> None:
+    """A trigger that survives the reboot is the one way this could loop.
+
+    Cleared here as well as in bbmon-init, because these are two different
+    failures: this covers the reboot working, the other covers it not.
+    """
+    service = read_unit(REBOOT_UNIT)["Service"]
+    assert service.get("ExecStartPre") == f"/bin/rm -f {TRIGGER_FILE}"
+
+
+def test_the_watcher_fires_on_a_write_not_on_the_file_being_there() -> None:
+    """PathExists= would fire at boot on a leftover trigger — a reboot loop."""
+    path_unit = read_unit(REBOOT_PATH_UNIT)["Path"]
+
+    assert path_unit.get("PathModified") == TRIGGER_FILE
+    assert "PathExists" not in path_unit
+    assert "PathExistsGlob" not in path_unit
+    assert path_unit.get("Unit") == REBOOT_UNIT
+
+
+def test_the_watcher_is_the_unit_that_gets_enabled() -> None:
+    """The pair only works if the watcher starts at boot and the service does not."""
+    assert read_unit(REBOOT_PATH_UNIT)["Install"].get("WantedBy") == "multi-user.target"
+
+
+def test_the_watcher_will_not_run_without_a_working_init() -> None:
+    """A Pi whose configuration is broken must not be able to reboot itself.
+
+    The ordering matters as much as the dependency: bbmon-init deletes a
+    leftover trigger, and that has to have happened before anything watches.
+    """
+    unit = read_unit(REBOOT_PATH_UNIT)["Unit"]
+
+    assert "bbmon-init.service" in unit.get("Requires", "")
+    assert "bbmon-init.service" in unit.get("After", "")
+
+
+def test_the_trigger_is_the_path_the_code_writes() -> None:
+    """The units and bbmon.reboot have to name the same file to work at all."""
+    assert TRIGGER_FILE == str(trigger_file_path("/var/lib/bbmon/bbmon.db"))
+
+
+def test_the_reboot_unit_does_not_pretend_to_be_sandboxed() -> None:
+    """It has to run as root, and the restart row is written before it is called.
+
+    Asserted rather than left implicit so nobody 'fixes' the missing User= by
+    adding one, which would leave the unit unable to do the one thing it does.
+    """
+    service = read_unit(REBOOT_UNIT)["Service"]
+    assert "User" not in service
+    assert "StateDirectory" not in service

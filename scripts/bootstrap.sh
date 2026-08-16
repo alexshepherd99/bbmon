@@ -47,7 +47,15 @@ declare -A OOKLA_SHA256=(
 # would fail on a machine that had been bootstrapped successfully.
 APT_PACKAGES=(python3 python3-venv python3-pip iputils-ping rsync curl ca-certificates git)
 
-UNITS=(bbmon-init.service bbmon-pinger.service bbmon-speedtest.service bbmon-web.service)
+# Enabled and started. bbmon-reboot.path belongs here: it is the watcher, and
+# it has to be running for a reboot request to be noticed at all.
+UNITS=(bbmon-init.service bbmon-pinger.service bbmon-speedtest.service
+       bbmon-web.service bbmon-reboot.path)
+
+# Installed and left alone: started by bbmon-reboot.path, never enabled and
+# never started here. bbmon-reboot.service reboots the machine when it starts,
+# so enabling it would put the Pi in a boot loop.
+ON_DEMAND_UNITS=(bbmon-reboot.service)
 
 # Set when a temporary directory is in use; removed on exit however we leave,
 # including via die(). Empty rather than unset so `set -u` is satisfied before
@@ -270,13 +278,16 @@ EOF
 
 install_units() {
   log "Installing the systemd units"
-  for unit in "${UNITS[@]}"; do
+  for unit in "${UNITS[@]}" "${ON_DEMAND_UNITS[@]}"; do
     install -o root -g root -m 0644 \
       "$INSTALL_DIR/deploy/systemd/$unit" "/etc/systemd/system/$unit"
   done
   systemctl daemon-reload
+  # Only UNITS is enabled. ON_DEMAND_UNITS is installed and left inactive —
+  # enabling bbmon-reboot.service would reboot the Pi on every boot.
   systemctl enable -q "${UNITS[@]}"
   note "enabled: ${UNITS[*]}"
+  note "installed but not enabled: ${ON_DEMAND_UNITS[*]}"
 }
 
 start_services() {

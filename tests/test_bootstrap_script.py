@@ -54,6 +54,32 @@ def test_sourcing_the_script_installs_nothing() -> None:
     assert "Installing" not in result.stdout
 
 
+def unit_list(name: str) -> list[str]:
+    """Read one of the script's unit arrays without running anything."""
+    result = subprocess.run(
+        ["bash", "-c", f'source "{BOOTSTRAP}"; printf "%s\\n" "${{{name}[@]}}"'],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return result.stdout.split()
+
+
+def test_the_reboot_service_is_installed_but_never_enabled() -> None:
+    """Enabling it would reboot the Pi on every boot, for ever.
+
+    The two arrays are what keeps that from happening: everything in UNITS is
+    enabled and started, and only what is in ON_DEMAND_UNITS escapes that.
+    """
+    assert "bbmon-reboot.service" in unit_list("ON_DEMAND_UNITS")
+    assert "bbmon-reboot.service" not in unit_list("UNITS")
+
+
+def test_the_reboot_watcher_is_enabled() -> None:
+    """It is the half of the pair that has to be running to notice a request."""
+    assert "bbmon-reboot.path" in unit_list("UNITS")
+
+
 def test_a_wide_open_range_is_left_alone() -> None:
     """The bug G1 found: this used to narrow it to the bbmon group alone."""
     assert range_for(996, *WIDE_OPEN) == ""

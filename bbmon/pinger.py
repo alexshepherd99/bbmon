@@ -39,7 +39,9 @@ def main() -> int:
     try:
         config = load()
         db.initialise(config.database_path)
-        reboot_action = reboot.action_from_environment()
+        reboot_action = reboot.action_from_environment(
+            reboot.trigger_file_path(config.database_path)
+        )
         scheduler = RebootScheduler(
             interval_days=config.reboot_interval_days,
             action=reboot_action,

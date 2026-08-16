@@ -49,6 +49,11 @@ def main() -> int:
         db.SCHEMA_VERSION,
     )
 
+    # bbmon-reboot.path is ordered after this unit, so a trigger left over
+    # from the reboot that produced this boot is gone before anything can
+    # watch for it. See bbmon.reboot.clear_trigger.
+    reboot.clear_trigger(reboot.trigger_file_path(config.database_path))
+
     # Requirement 6, and the reason this wait is here rather than in each
     # service: the restart row below is the boot's first timestamped write, and
     # every other unit is ordered after this one, so waiting once covers them
