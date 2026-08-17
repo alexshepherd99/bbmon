@@ -297,6 +297,40 @@ def latest_restart(conn: sqlite3.Connection) -> Restart | None:
     if row is None:
         return None
 
+    return _restart_from_row(row)
+
+
+def recent_restarts(
+    conn: sqlite3.Connection, limit: int, include_expected: bool = True
+) -> list[Restart]:
+    """Return the most recent restarts, newest first.
+
+    :param limit: How many to return at most.
+    :param include_expected: When false, list only restarts bbmon did not ask
+        for — requirement 7's toggle. The filter is applied before the limit,
+        not after: on a healthy machine every recent restart is a scheduled
+        one, so limiting first would select a screenful of expected rows and
+        then discard them all, hiding the very restarts the toggle looks for.
+    """
+    # The WHERE clause is chosen from a boolean, never built from input, and
+    # the limit is bound as a parameter like every other value here.
+    condition = "" if include_expected else "WHERE expected = 0"
+
+    try:
+        rows = conn.execute(
+            "SELECT timestamp, expected, reason FROM restarts "
+            f"{condition} ORDER BY timestamp DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+    except sqlite3.Error as error:
+        logger.error("Could not read recent restarts: %s", error)
+        raise DatabaseError(f"Could not read recent restarts: {error}")
+
+    return [_restart_from_row(row) for row in rows]
+
+
+def _restart_from_row(row: tuple) -> Restart:
+    """Build a restart from a row selecting timestamp, expected and reason."""
     timestamp, expected, reason = row
     return Restart(
         timestamp=datetime.fromisoformat(timestamp),
