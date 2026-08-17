@@ -35,6 +35,7 @@ _FIELD_MAP: dict[tuple[str, str], str] = {
     ("retention", "ping_days"): "retention_ping_days",
     ("web", "host"): "web_host",
     ("web", "port"): "web_port",
+    ("web", "restart_limit"): "web_restart_limit",
     ("database", "path"): "database_path",
 }
 
@@ -58,6 +59,9 @@ class Config:
     retention_ping_days: int = 30
     web_host: str = "127.0.0.1"
     web_port: int = 8080
+    #: How many restarts the dashboard lists. Requirement 7 asks for the last
+    #: 20, configurable.
+    web_restart_limit: int = 20
     database_path: Path = Path("/var/lib/bbmon/bbmon.db")
 
     def __post_init__(self) -> None:
@@ -68,6 +72,7 @@ class Config:
         _require_ping_targets(self.ping_targets)
         _require_bind_address(self.web_host)
         _require_port(self.web_port)
+        _require_positive_int(self.web_restart_limit, "web.restart_limit")
         _require_database_path(self.database_path)
 
 

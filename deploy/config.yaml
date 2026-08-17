@@ -30,6 +30,8 @@ web:
   # in-code default, and it is why the LAN is the trust boundary.
   host: 0.0.0.0
   port: 8080
+  # How many restarts the dashboard's restart list shows.
+  restart_limit: 20
 
 database:
   path: /var/lib/bbmon/bbmon.db

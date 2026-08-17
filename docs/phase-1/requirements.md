@@ -57,6 +57,8 @@ A shared Python package (e.g. `bbmon/`) holds common code: config loader, DB acc
     explicitly rather than left to a framework default; the Pi's deployed config
     sets `0.0.0.0` so the dashboard is reachable from the LAN
   - `web.port` (default 8080)
+  - `web.restart_limit` (default 20) — how many restarts the dashboard's
+    restart list shows, which item 7 asks to be configurable
   - `database.path` (default `/var/lib/bbmon/bbmon.db`)
 - The file's own location comes from the `BBMON_CONFIG` environment variable,
   falling back to `/etc/bbmon/config.yaml`. That single override is what lets a

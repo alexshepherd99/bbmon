@@ -24,6 +24,7 @@ def test_absent_values_fall_back_to_defaults(tmp_path: Path) -> None:
     assert config.reboot_interval_days == 3
     assert config.retention_ping_days == 30
     assert config.web_port == 8080
+    assert config.web_restart_limit == 20
     assert config.database_path == Path("/var/lib/bbmon/bbmon.db")
 
 
@@ -43,6 +44,7 @@ def test_every_field_can_be_overridden(tmp_path: Path) -> None:
         web:
           host: 0.0.0.0
           port: 9090
+          restart_limit: 5
         database:
           path: ./var/bbmon.db
         """,
@@ -57,6 +59,7 @@ def test_every_field_can_be_overridden(tmp_path: Path) -> None:
     assert config.retention_ping_days == 14
     assert config.web_host == "0.0.0.0"
     assert config.web_port == 9090
+    assert config.web_restart_limit == 5
     assert config.database_path == Path("./var/bbmon.db")
 
 
@@ -187,6 +190,19 @@ def test_ping_targets_must_be_a_list(tmp_path: Path) -> None:
     path = write_config(tmp_path, "ping:\n  targets: google.com\n")
 
     with pytest.raises(ConfigError, match="list"):
+        load(path)
+
+
+@pytest.mark.parametrize("limit", [0, -1])
+def test_web_restart_limit_must_be_positive(tmp_path: Path, limit: int) -> None:
+    """Requirement 7 makes the restart list length configurable; zero is not a
+    length anyone means, and it would render an empty panel with no error."""
+    path = write_config(tmp_path, f"web:\n  restart_limit: {limit}\n")
+
+    # Matching on the field name alone passed before the field existed at all,
+    # by colliding with the "unknown setting web.restart_limit" rejection. The
+    # bound is what this test is about, so the bound is what it matches.
+    with pytest.raises(ConfigError, match="must be greater than 0"):
         load(path)
 
 
