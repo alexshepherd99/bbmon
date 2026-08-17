@@ -130,6 +130,34 @@ def test_hourly_pings_exclude_samples_older_than_a_day(
     assert client.get("/api/ping/hourly").get_json()["buckets"] == []
 
 
+def test_the_window_covers_exactly_twenty_four_hour_buckets(
+    database: Path, client: FlaskClient
+) -> None:
+    """A window measured from "now" straddles hour boundaries.
+
+    Counting back 24 hours from part-way through an hour clips a sliver off
+    the oldest hour and adds the current partial one, so the chart drew 25
+    columns for a window labelled 24 hours — the first of them a box built
+    from a fraction of an hour's pings, sitting beside full ones.
+    """
+    this_hour = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0)
+    oldest = this_hour - timedelta(hours=23)
+    store_pings(
+        database,
+        ping(minutes_ago=0.0),
+        # One second either side of the oldest hour this window should reach.
+        PingResult(oldest, "8.8.8.8", 20.0, True),
+        PingResult(oldest - timedelta(seconds=1), "8.8.8.8", 30.0, True),
+    )
+
+    buckets = client.get("/api/ping/hourly").get_json()["buckets"]
+    hours = {bucket["hour"] for bucket in buckets}
+
+    assert len(hours) == 2
+    assert oldest.isoformat() in hours
+    assert (oldest - timedelta(hours=1)).isoformat() not in hours
+
+
 def test_hourly_pings_with_no_data_return_an_empty_list(client: FlaskClient) -> None:
     response = client.get("/api/ping/hourly")
 

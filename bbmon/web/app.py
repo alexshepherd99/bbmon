@@ -94,7 +94,15 @@ def create_app(config: Config, cache: TimedCache | None = None) -> Flask:
 
     @app.get("/api/ping/hourly")
     def hourly_ping_data():
-        since = datetime.now(timezone.utc) - timedelta(hours=BOX_PLOT_HOURS)
+        # From the top of an hour, not from this instant. Counting back 24
+        # hours from part-way through one clips a sliver off the oldest hour
+        # and adds the current partial hour, which drew 25 columns for a
+        # window labelled 24 — the first of them a box built from a few
+        # minutes' pings, sitting beside boxes built from full hours.
+        this_hour = datetime.now(timezone.utc).replace(
+            minute=0, second=0, microsecond=0
+        )
+        since = this_hour - timedelta(hours=BOX_PLOT_HOURS - 1)
         buckets = read(
             "ping-hourly", lambda conn: db.hourly_ping_summary(conn, since=since)
         )
