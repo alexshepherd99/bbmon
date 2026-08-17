@@ -13,6 +13,7 @@ from __future__ import annotations
 import logging
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 from flask import Flask, jsonify, render_template, request
 from werkzeug.exceptions import BadRequest
@@ -51,6 +52,26 @@ MAX_HISTORY_DAYS = 30
 #: freshness and makes the cost independent of how many people are watching.
 SLOW_CACHE_TTL_SECONDS = 300
 
+#: Written by ``deploy.sh`` and ``update.sh`` beside the database, and shown in
+#: the footer. Requirement 7 wants the footer to confirm the update script
+#: deployed the latest code, which the package version cannot do — it does not
+#: change between deploys.
+#:
+#: The scripts name this path literally while the app derives it from
+#: ``database.path``, the same join M4 had to guard for the reboot trigger.
+#: Guarded far more weakly here on purpose: moving the database makes the
+#: footer say "unknown", where moving the reboot trigger made the Pi silently
+#: stop rebooting.
+BUILD_STAMP_NAME = "build-stamp"
+
+#: Shown when no stamp is there to read — a checkout that was never deployed,
+#: or a Pi bootstrapped before the scripts wrote one.
+UNKNOWN_BUILD = "build unknown"
+
+#: The stamp is one short line. Anything longer is a corrupt or wrong file, and
+#: a footer is not the place to discover that by wrapping across the page.
+MAX_STAMP_LENGTH = 120
+
 
 def create_app(config: Config, cache: TimedCache | None = None) -> Flask:
     """Build the application for a given configuration.
@@ -68,7 +89,11 @@ def create_app(config: Config, cache: TimedCache | None = None) -> Flask:
 
     @app.get("/")
     def dashboard() -> str:
-        return render_template("dashboard.html", version=__version__)
+        return render_template(
+            "dashboard.html",
+            version=__version__,
+            build=_read_build_stamp(config.database_path.parent / BUILD_STAMP_NAME),
+        )
 
     def read(key, query, ttl_seconds=None):
         """Run a database read through the cache.
@@ -230,6 +255,27 @@ def _requested_window_minutes() -> int:
         raise BadRequest(f"minutes must be between 1 and {MAX_WINDOW_MINUTES}")
 
     return minutes
+
+
+def _read_build_stamp(path: Path) -> str:
+    """Return what the deploy scripts recorded about this deployment.
+
+    Read on every page request rather than once at startup: ``deploy.sh``
+    restarts only the services whose files changed, so a deploy that misses the
+    web app would otherwise leave the footer reporting the previous build —
+    the exact question this indicator exists to answer.
+
+    A missing or unreadable stamp is not an error. A developer's checkout has
+    never been deployed, and neither has a Pi bootstrapped before the scripts
+    started writing one; both should say so rather than fail to serve a page.
+    """
+    try:
+        text = path.read_text()
+    except OSError:
+        return UNKNOWN_BUILD
+
+    line = text.strip().splitlines()[0].strip() if text.strip() else ""
+    return line[:MAX_STAMP_LENGTH] if line else UNKNOWN_BUILD
 
 
 def _requested_history_days() -> int:

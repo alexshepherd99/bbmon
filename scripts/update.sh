@@ -15,6 +15,9 @@ set -euo pipefail
 
 INSTALL_DIR=/opt/bbmon
 VENV_DIR="$INSTALL_DIR/.venv"
+# Read by the web app and shown in the dashboard footer — see BUILD_STAMP_NAME
+# in bbmon/web/app.py, and the matching constant in scripts/deploy.sh.
+BUILD_STAMP=/var/lib/bbmon/build-stamp
 UNITS=(bbmon-init.service bbmon-pinger.service bbmon-speedtest.service bbmon-web.service)
 SERVICES=(bbmon-pinger.service bbmon-speedtest.service bbmon-web.service)
 
@@ -52,6 +55,16 @@ discard_deploy_artifacts() {
   note "restored to committed state"
 }
 
+# Records what is now deployed, for the dashboard footer.
+#
+# Written after the pull rather than after the restart: the files on disk are
+# what the stamp describes, and a service that then fails to come up is
+# reported loudly by this script rather than hidden behind a stale footer.
+write_build_stamp() {
+  printf 'updated %s from %s by update.sh\n' "$(date -Is)" "$1" > "$BUILD_STAMP"
+  chmod 0644 "$BUILD_STAMP"
+}
+
 main() {
   require_root
   [[ -d "$INSTALL_DIR/.git" ]] \
@@ -79,6 +92,8 @@ main() {
   # upstream, which reads like a git problem rather than a deploy one.
   sudo -u "$owner" git pull --ff-only origin "$branch"
   after="$(sudo -u "$owner" git rev-parse HEAD)"
+
+  write_build_stamp "$(sudo -u "$owner" git rev-parse --short HEAD)"
 
   if [[ "$before" == "$after" ]]; then
     log "Already up to date"

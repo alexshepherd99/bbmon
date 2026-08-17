@@ -35,6 +35,77 @@ def services_for(path: str) -> set[str]:
     return set(result.stdout.split())
 
 
+def build_stamp_text(root: Path) -> str:
+    """Ask the real script for the line it would record on the Pi."""
+    result = subprocess.run(
+        ["bash", "-c", f'source "{DEPLOY_SCRIPT}"; build_stamp_text "{root}"'],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return result.stdout.strip()
+
+
+def make_repo(path: Path) -> None:
+    def run(*args: str) -> None:
+        subprocess.run(args, cwd=path, check=True, capture_output=True)
+
+    path.mkdir(parents=True, exist_ok=True)
+    run("git", "init", "-q")
+    run("git", "config", "user.email", "test@example.invalid")
+    run("git", "config", "user.name", "Test")
+    (path / "tracked.txt").write_text("original\n")
+    run("git", "add", "tracked.txt")
+    run("git", "commit", "-qm", "first")
+
+
+def test_the_build_stamp_names_the_script_that_wrote_it(tmp_path: Path) -> None:
+    """Two scripts write this file, and which one ran is worth knowing."""
+    make_repo(tmp_path)
+
+    assert "by deploy.sh" in build_stamp_text(tmp_path)
+
+
+def test_a_clean_tree_is_stamped_with_its_commit(tmp_path: Path) -> None:
+    make_repo(tmp_path)
+    revision = subprocess.run(
+        ["git", "rev-parse", "--short", "HEAD"],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+
+    stamp = build_stamp_text(tmp_path)
+
+    assert f"from {revision} " in stamp
+    assert "+local" not in stamp
+
+
+def test_a_dirty_tree_is_marked_as_local(tmp_path: Path) -> None:
+    """deploy.sh pushes uncommitted work, so the commit alone would be a lie.
+
+    Without the marker the footer would name a commit that is not what was
+    copied to the Pi, which is worse than saying nothing at all.
+    """
+    make_repo(tmp_path)
+    (tmp_path / "tracked.txt").write_text("edited but not committed\n")
+
+    assert "+local" in build_stamp_text(tmp_path)
+
+
+def test_an_untracked_file_also_marks_the_tree_as_local(tmp_path: Path) -> None:
+    """rsync copies untracked files too, so they are part of what is deployed."""
+    make_repo(tmp_path)
+    (tmp_path / "extra.py").write_text("print('new module')\n")
+
+    assert "+local" in build_stamp_text(tmp_path)
+
+
+def test_a_checkout_without_git_is_stamped_unknown(tmp_path: Path) -> None:
+    assert "from unknown" in build_stamp_text(tmp_path)
+
+
 def test_sourcing_the_script_does_not_deploy() -> None:
     """The guard around main() is what makes every other test here safe."""
     result = subprocess.run(

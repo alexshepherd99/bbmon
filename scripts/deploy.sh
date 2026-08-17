@@ -18,6 +18,12 @@ set -euo pipefail
 INSTALL_DIR=/opt/bbmon
 DEFAULT_HOST=raspberrypi
 
+# Read by the web app and shown in the dashboard footer, so requirement 7's
+# build indicator says what is actually deployed. The app derives this path
+# from database.path; move that setting and the footer says "build unknown".
+# See BUILD_STAMP_NAME in bbmon/web/app.py.
+BUILD_STAMP=/var/lib/bbmon/build-stamp
+
 # Never pushed: the venv is architecture-specific, .git belongs to the Pi's own
 # checkout (update.sh pulls into it), and var/ plus the caches are local junk.
 EXCLUDES=(
@@ -79,6 +85,21 @@ services_for_path() {
   esac
 }
 
+# The line recorded on the Pi as "what is deployed here".
+#
+# The revision is marked "+local" whenever the working tree differs from HEAD,
+# because this script deliberately pushes uncommitted work — without that
+# marker the stamp would name a commit that is not what was actually copied,
+# which is worse than saying nothing.
+build_stamp_text() {
+  local root="$1" revision
+  revision="$(git -C "$root" rev-parse --short HEAD 2>/dev/null || echo unknown)"
+  if [[ -n "$(git -C "$root" status --porcelain 2>/dev/null)" ]]; then
+    revision="$revision+local"
+  fi
+  printf 'deployed %s from %s by deploy.sh\n' "$(date -Is)" "$revision"
+}
+
 main() {
   local host="${BBMON_HOST:-$DEFAULT_HOST}"
   local dry_run=0
@@ -105,6 +126,17 @@ main() {
   local output
   output="$(rsync -az --delete --itemize-changes "${EXCLUDES[@]}" "${rsync_extra[@]}" \
     "$root/" "$host:$INSTALL_DIR/")"
+
+  # Written whether or not anything changed, and before the early return
+  # below: the stamp records what is deployed here, and an unchanged deploy
+  # still confirms it. The text goes over stdin rather than onto the remote
+  # command line, so nothing in it is ever interpreted by a shell.
+  if [[ "$dry_run" -eq 0 ]]; then
+    # shellcheck disable=SC2029  # BUILD_STAMP is a literal constant above,
+    # expanded locally on purpose; nothing derived from input reaches here.
+    build_stamp_text "$root" | ssh "$host" "sudo tee $BUILD_STAMP >/dev/null" \
+      || die "could not write $BUILD_STAMP on $host"
+  fi
 
   local changed
   changed="$(echo "$output" | changed_paths_from_itemize)"
