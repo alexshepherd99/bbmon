@@ -21,6 +21,34 @@ class PingResult:
 
 
 @dataclass(frozen=True)
+class HourlyPingSummary:
+    """One target's latency distribution over one clock hour.
+
+    The five statistics are exactly what a box plot draws, computed in SQL so
+    the whole day's raw pings never travel into Python — a day at the default
+    five-second interval is tens of thousands of rows per target, and this
+    reduces each hour of them to one box.
+
+    Quartiles are nearest-rank: the sample sitting at the quarter, half and
+    three-quarter positions of the sorted latencies, with no interpolation
+    between neighbours. For a distribution summary drawn a few pixels wide,
+    the difference from an interpolated quartile is not visible.
+
+    ``count`` is how many samples the box was built from, so a box drawn from
+    a handful of pings after an outage can be told from a full hour's worth.
+    """
+
+    hour: datetime
+    target: str
+    count: int
+    low: float
+    q1: float
+    median: float
+    q3: float
+    high: float
+
+
+@dataclass(frozen=True)
 class Restart:
     """One restart of the machine.
 

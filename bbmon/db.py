@@ -13,10 +13,10 @@ import logging
 import sqlite3
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
-from bbmon.models import PingResult, Restart, SpeedtestResult
+from bbmon.models import HourlyPingSummary, PingResult, Restart, SpeedtestResult
 
 logger = logging.getLogger(__name__)
 
@@ -296,4 +296,90 @@ def recent_ping_results(
             success=bool(success),
         )
         for timestamp, target, latency_ms, success in rows
+    ]
+
+
+#: Buckets a stored timestamp into its clock hour. Every timestamp is written
+#: by ``datetime.isoformat()`` in UTC, so the first 13 characters are always
+#: ``YYYY-MM-DDTHH`` and string truncation is a correct hour key.
+_HOUR_KEY = "substr(timestamp, 1, 13)"
+
+_HOUR_KEY_FORMAT = "%Y-%m-%dT%H"
+
+#: Nearest-rank quartiles over each bucket's latencies.
+#:
+#: ``ROW_NUMBER`` sorts each (hour, target) group by latency and ``COUNT`` gives
+#: the group's size, so the sample at any quantile is the one whose position
+#: equals that fraction of the total, rounded up. Integer division makes that
+#: ceiling directly: ``ceil(a/b)`` is ``(a + b - 1) / b``.
+#:
+#: Only rows carrying a latency take part. A failed ping has none, so including
+#: it would either drag the box down to zero or need a null filtered out later;
+#: ``count`` therefore means "samples in the box", not "pings attempted".
+_HOURLY_PING_SUMMARY_SQL = f"""
+    WITH ranked AS (
+        SELECT
+            {_HOUR_KEY} AS hour,
+            target,
+            latency_ms,
+            ROW_NUMBER() OVER (
+                PARTITION BY {_HOUR_KEY}, target ORDER BY latency_ms
+            ) AS position,
+            COUNT(*) OVER (PARTITION BY {_HOUR_KEY}, target) AS total
+        FROM ping_results
+        WHERE timestamp >= ? AND latency_ms IS NOT NULL
+    )
+    SELECT
+        hour,
+        target,
+        total,
+        MIN(latency_ms) AS low,
+        MAX(CASE WHEN position = (total + 3) / 4 THEN latency_ms END) AS q1,
+        MAX(CASE WHEN position = (total + 1) / 2 THEN latency_ms END) AS median,
+        MAX(CASE WHEN position = (total * 3 + 3) / 4 THEN latency_ms END) AS q3,
+        MAX(latency_ms) AS high
+    FROM ranked
+    GROUP BY hour, target, total
+    -- Removing this leaves the tests green, because SQLite's GROUP BY happens
+    -- to emit groups in key order. That makes the ordering an accident of the
+    -- query plan rather than a guarantee, which is exactly why it stays.
+    ORDER BY hour, target
+"""
+
+
+def hourly_ping_summary(
+    conn: sqlite3.Connection, since: datetime
+) -> list[HourlyPingSummary]:
+    """Summarise latency per target per clock hour, for the long-term chart.
+
+    The aggregation happens in SQLite rather than in Python because requirement
+    10 asks the chart queries to stay responsive on a Pi 3: a day of pings is
+    tens of thousands of rows, and only the resulting handful of boxes needs to
+    cross into the application.
+
+    Buckets come back oldest first, and alphabetically by target within an
+    hour, which is the order the chart plots them in.
+
+    :param since: Ignore samples recorded before this moment.
+    """
+    try:
+        rows = conn.execute(
+            _HOURLY_PING_SUMMARY_SQL, (since.isoformat(),)
+        ).fetchall()
+    except sqlite3.Error as error:
+        logger.error("Could not summarise ping results: %s", error)
+        raise DatabaseError(f"Could not summarise ping results: {error}")
+
+    return [
+        HourlyPingSummary(
+            hour=datetime.strptime(hour, _HOUR_KEY_FORMAT).replace(tzinfo=timezone.utc),
+            target=target,
+            count=total,
+            low=low,
+            q1=q1,
+            median=median,
+            q3=q3,
+            high=high,
+        )
+        for hour, target, total, low, q1, median, q3, high in rows
     ]
