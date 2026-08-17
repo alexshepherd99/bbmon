@@ -32,6 +32,71 @@ def result(minutes_ago: int, download: float = 48.5) -> SpeedtestResult:
     )
 
 
+def failure(minutes_ago: int) -> SpeedtestResult:
+    return SpeedtestResult(
+        timestamp=at(minutes_ago),
+        download_mbps=None,
+        upload_mbps=None,
+        ping_ms=None,
+        isp=None,
+        server=None,
+        success=False,
+    )
+
+
+def test_history_returns_results_oldest_first(database: Path) -> None:
+    """The chart plots these along a time axis, so order is the contract.
+
+    The newest row is inserted first, so returning rows in natural order gives
+    the wrong answer rather than coincidentally the right one.
+    """
+    with db.connect(database) as conn:
+        db.insert_speedtest_results(
+            conn,
+            [result(5, download=10.0), result(600, download=20.0), result(300, download=30.0)],
+        )
+
+    with db.connect(database) as conn:
+        history = db.speedtest_history(conn, since=at(1440))
+
+    assert [row.download_mbps for row in history] == [20.0, 30.0, 10.0]
+
+
+def test_history_excludes_results_before_the_window(database: Path) -> None:
+    with db.connect(database) as conn:
+        db.insert_speedtest_results(
+            conn, [result(600, download=20.0), result(5, download=10.0)]
+        )
+
+    with db.connect(database) as conn:
+        history = db.speedtest_history(conn, since=at(60))
+
+    assert [row.download_mbps for row in history] == [10.0]
+
+
+def test_history_includes_failed_runs(database: Path) -> None:
+    """A failure is a gap in the line, which is data — requirement 5.
+
+    Dropping these would draw the chart straight through an outage, which is
+    the opposite of what recording failures was for.
+    """
+    with db.connect(database) as conn:
+        db.insert_speedtest_results(conn, [failure(30), result(5, download=10.0)])
+
+    with db.connect(database) as conn:
+        history = db.speedtest_history(conn, since=at(60))
+
+    assert [(row.success, row.download_mbps) for row in history] == [
+        (False, None),
+        (True, 10.0),
+    ]
+
+
+def test_history_of_an_empty_database_is_empty(database: Path) -> None:
+    with db.connect(database) as conn:
+        assert db.speedtest_history(conn, since=at(60)) == []
+
+
 def test_speedtest_results_round_trip(database: Path) -> None:
     with db.connect(database) as conn:
         db.insert_speedtest_results(conn, [result(5)])

@@ -216,6 +216,37 @@ def latest_speedtest_result(conn: sqlite3.Connection) -> SpeedtestResult | None:
     if row is None:
         return None
 
+    return _speedtest_from_row(row)
+
+
+def speedtest_history(
+    conn: sqlite3.Connection, since: datetime
+) -> list[SpeedtestResult]:
+    """Return every speed test recorded at or after ``since``, oldest first.
+
+    Raw rows rather than an aggregate, unlike :func:`hourly_ping_summary`:
+    speed tests run every few hours, so even the chart's longest range is a
+    few hundred rows and bucketing them would cost code and save nothing.
+
+    Failed runs are included. Their readings are null, which draws a gap in
+    the line — recording failures rather than skipping them (requirement 5)
+    exists precisely so an outage is visible instead of being smoothed over.
+    """
+    try:
+        rows = conn.execute(
+            "SELECT timestamp, download_mbps, upload_mbps, ping_ms, isp, server, "
+            "success FROM speedtest_results WHERE timestamp >= ? ORDER BY timestamp",
+            (since.isoformat(),),
+        ).fetchall()
+    except sqlite3.Error as error:
+        logger.error("Could not read speed test history: %s", error)
+        raise DatabaseError(f"Could not read speed test history: {error}")
+
+    return [_speedtest_from_row(row) for row in rows]
+
+
+def _speedtest_from_row(row: tuple) -> SpeedtestResult:
+    """Build a result from a row selecting the seven columns in table order."""
     timestamp, download_mbps, upload_mbps, ping_ms, isp, server, success = row
     return SpeedtestResult(
         timestamp=datetime.fromisoformat(timestamp),
