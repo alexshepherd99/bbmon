@@ -1,8 +1,8 @@
 """Flask application serving the dashboard and its data.
 
-M1 is deliberately thin: one chart, reading raw rows. The pre-aggregation and
-short-lived cache that requirement 10 asks for arrive at M5, once there is more
-than one chart to share them.
+Every read goes through a short-lived cache (requirement 10): several browsers
+on the LAN poll the same endpoints on their own timers, and without it each
+viewer would cost the Pi its own copy of every query.
 
 The app has no authentication by requirement — it is LAN-only — so the debugger
 is hard off and the bind address is explicit rather than implicit.
@@ -19,6 +19,7 @@ from werkzeug.exceptions import BadRequest
 
 from bbmon import __version__, db
 from bbmon.config import Config, ConfigError, load
+from bbmon.web.cache import TimedCache
 
 logger = logging.getLogger(__name__)
 
@@ -29,9 +30,22 @@ DEFAULT_WINDOW_MINUTES = 120
 #: on a machine this small.
 MAX_WINDOW_MINUTES = 24 * 60
 
+#: The long-term chart's window. Requirement 7 fixes it at one day boxed
+#: hourly, so it takes no parameter — there is nothing for a caller to choose.
+BOX_PLOT_HOURS = 24
 
-def create_app(config: Config) -> Flask:
-    """Build the application for a given configuration."""
+#: Requirement 7's "selectable time range (e.g. last 24h / 7d / 30d)".
+DEFAULT_HISTORY_DAYS = 7
+MAX_HISTORY_DAYS = 30
+
+
+def create_app(config: Config, cache: TimedCache | None = None) -> Flask:
+    """Build the application for a given configuration.
+
+    :param cache: The query cache. Injectable so tests can control expiry
+        rather than wait for it; the default is the ordinary timed one.
+    """
+    cache = cache if cache is not None else TimedCache()
     app = Flask(__name__)
     # Never on, in any environment: the Werkzeug debugger is remote code
     # execution to anyone who can reach the port, and this port is open to the
@@ -43,13 +57,28 @@ def create_app(config: Config) -> Flask:
     def dashboard() -> str:
         return render_template("dashboard.html", version=__version__)
 
+    def read(key, query):
+        """Run a database read through the cache.
+
+        ``key`` must be built from validated parameters only, never from raw
+        query-string text: the cache has no eviction beyond expiry, so an
+        attacker-chosen key would grow it without bound.
+        """
+
+        def produce():
+            with db.connect(config.database_path) as conn:
+                return query(conn)
+
+        return cache.get_or_call(key, produce)
+
     @app.get("/api/ping")
     def ping_data():
         minutes = _requested_window_minutes()
         since = datetime.now(timezone.utc) - timedelta(minutes=minutes)
 
-        with db.connect(config.database_path) as conn:
-            results = db.recent_ping_results(conn, since=since)
+        results = read(
+            ("ping", minutes), lambda conn: db.recent_ping_results(conn, since=since)
+        )
 
         series: dict[str, list[list[float | None]]] = defaultdict(list)
         for result in results:
@@ -63,10 +92,83 @@ def create_app(config: Config) -> Flask:
             targets=series,
         )
 
+    @app.get("/api/ping/hourly")
+    def hourly_ping_data():
+        since = datetime.now(timezone.utc) - timedelta(hours=BOX_PLOT_HOURS)
+        buckets = read(
+            "ping-hourly", lambda conn: db.hourly_ping_summary(conn, since=since)
+        )
+
+        return jsonify(
+            hours=BOX_PLOT_HOURS,
+            generated_at=datetime.now(timezone.utc).isoformat(),
+            buckets=[
+                {
+                    "hour": bucket.hour.isoformat(),
+                    "target": bucket.target,
+                    "count": bucket.count,
+                    "low": bucket.low,
+                    "q1": bucket.q1,
+                    "median": bucket.median,
+                    "q3": bucket.q3,
+                    "high": bucket.high,
+                }
+                for bucket in buckets
+            ],
+        )
+
+    @app.get("/api/speedtest/history")
+    def speedtest_history():
+        days = _requested_history_days()
+        since = datetime.now(timezone.utc) - timedelta(days=days)
+        results = read(
+            ("speedtest-history", days),
+            lambda conn: db.speedtest_history(conn, since=since),
+        )
+
+        return jsonify(
+            days=days,
+            generated_at=datetime.now(timezone.utc).isoformat(),
+            results=[
+                {
+                    "timestamp": result.timestamp.isoformat(),
+                    "download_mbps": result.download_mbps,
+                    "upload_mbps": result.upload_mbps,
+                    "ping_ms": result.ping_ms,
+                    "success": result.success,
+                }
+                for result in results
+            ],
+        )
+
+    @app.get("/api/restarts")
+    def restarts():
+        include_expected = _requested_include_expected()
+        limit = config.web_restart_limit
+        recorded = read(
+            ("restarts", limit, include_expected),
+            lambda conn: db.recent_restarts(
+                conn, limit=limit, include_expected=include_expected
+            ),
+        )
+
+        return jsonify(
+            limit=limit,
+            include_expected=include_expected,
+            generated_at=datetime.now(timezone.utc).isoformat(),
+            restarts=[
+                {
+                    "timestamp": restart.timestamp.isoformat(),
+                    "expected": restart.expected,
+                    "reason": restart.reason,
+                }
+                for restart in recorded
+            ],
+        )
+
     @app.get("/api/speedtest/latest")
     def latest_speedtest():
-        with db.connect(config.database_path) as conn:
-            result = db.latest_speedtest_result(conn)
+        result = read("speedtest-latest", db.latest_speedtest_result)
 
         if result is None:
             # Distinct from a failed run, which returns a result whose success
@@ -103,6 +205,39 @@ def _requested_window_minutes() -> int:
         raise BadRequest(f"minutes must be between 1 and {MAX_WINDOW_MINUTES}")
 
     return minutes
+
+
+def _requested_history_days() -> int:
+    """Read and bound the speed test history's ``days`` query parameter."""
+    raw = request.args.get("days")
+    if raw is None:
+        return DEFAULT_HISTORY_DAYS
+
+    try:
+        days = int(raw)
+    except ValueError:
+        raise BadRequest(f"days must be a whole number, got {raw!r}")
+
+    if not 1 <= days <= MAX_HISTORY_DAYS:
+        raise BadRequest(f"days must be between 1 and {MAX_HISTORY_DAYS}")
+
+    return days
+
+
+def _requested_include_expected() -> bool:
+    """Read requirement 7's restart-list toggle.
+
+    Only the two spellings are accepted. Treating anything else as false would
+    silently hide the scheduled reboots on a typo, and the list would look
+    empty rather than wrong.
+    """
+    raw = request.args.get("include_expected")
+    if raw is None:
+        return True
+    if raw in ("true", "false"):
+        return raw == "true"
+
+    raise BadRequest(f"include_expected must be true or false, got {raw!r}")
 
 
 def main() -> int:
