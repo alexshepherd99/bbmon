@@ -80,15 +80,116 @@ main {
 
 .reading-meta.error { color: #ff8f8f; }
 
-/* Sized in vh so the chart stays usable on a phone held either way. */
+/* A heading with its controls beside it, dropping the controls onto their own
+   line when the heading no longer leaves room. */
+.card-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem 1rem;
+}
+
+.card-note {
+  margin: 0.5rem 0 0;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.card-head .card-note { margin-top: 0; }
+
+.card-note.error { color: #ff8f8f; }
+
+.controls {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin-bottom: 0.75rem;
+}
+
+.controls button {
+  background: transparent;
+  color: var(--muted);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  /* Comfortably past the ~44px minimum for a fingertip, so the range buttons
+     are usable on the phone requirement 7 asks the dashboard to work on. */
+  min-height: 2.75rem;
+  padding: 0 0.85rem;
+  font: inherit;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.controls button.selected {
+  background: var(--line);
+  color: var(--text);
+}
+
+.toggle {
+  color: var(--muted);
+  font-size: 0.85rem;
+  cursor: pointer;
+  min-height: 2.75rem;
+}
+
+.toggle input { width: 1.05rem; height: 1.05rem; }
+
+.restarts {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+.restarts th {
+  text-align: left;
+  font-weight: 600;
+  color: var(--muted);
+  font-size: 0.8rem;
+  padding: 0 0.5rem 0.4rem 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.restarts td {
+  padding: 0.45rem 0.5rem 0.45rem 0;
+  border-bottom: 1px solid var(--line);
+  vertical-align: top;
+}
+
+.restarts tr:last-child td { border-bottom: none; }
+
+.restarts .unexpected { color: #ff8f8f; }
+
+/* Sized in vh so the chart stays usable on a phone held either way. Smaller
+   than M1's single chart: five panels stacked at 55vh each is a great deal of
+   scrolling on a phone. */
 .chart {
   width: 100%;
-  height: 55vh;
-  min-height: 260px;
+  height: 42vh;
+  min-height: 240px;
 }
 
 footer {
   margin-top: 1rem;
   color: var(--muted);
   font-size: 0.8rem;
+}
+
+/* Phones get one column, which is the stacking above. A wider screen has room
+   to sit the two slow-moving charts side by side, so the page stops being a
+   single long scroll on a laptop. */
+@media (min-width: 60rem) {
+  main {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    align-items: start;
+  }
+
+  /* The panels that want the full width: the readings, the live chart, and
+     the restart table, which is text rather than a plot. */
+  #speedtest-panel,
+  main > .card:nth-child(2),
+  main > .card:last-child {
+    grid-column: 1 / -1;
+  }
 }

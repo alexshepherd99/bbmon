@@ -74,6 +74,21 @@ function describe(count, generatedAt) {
     : `${count} points — updated ${time}`;
 }
 
+// The names of the series currently on the chart, in order. Replacing the
+// series makes ECharts treat them as new and replay the entry animation, which
+// at a five-second poll meant the lines redrew left to right every five
+// seconds. Replacement is only needed when a target actually appears or
+// disappears; otherwise the new data is merged into the existing series, which
+// transitions instead of restarting.
+let drawnTargets = [];
+
+function sameSeriesAsDrawn(names) {
+  return (
+    names.length === drawnTargets.length &&
+    names.every((name, index) => name === drawnTargets[index])
+  );
+}
+
 async function refresh() {
   try {
     const response = await fetch("/api/ping");
@@ -83,8 +98,14 @@ async function refresh() {
     const body = await response.json();
     const series = seriesFor(body.targets);
     const points = series.reduce((total, s) => total + s.data.length, 0);
+    const names = series.map((s) => s.name);
 
-    chart.setOption({ ...baseOptions(), series }, { replaceMerge: ["series"] });
+    if (sameSeriesAsDrawn(names)) {
+      chart.setOption({ series: series.map((s) => ({ data: s.data })) });
+    } else {
+      chart.setOption({ ...baseOptions(), series }, { replaceMerge: ["series"] });
+      drawnTargets = names;
+    }
 
     status.textContent = describe(points, body.generated_at);
     status.classList.remove("error");
@@ -147,8 +168,297 @@ async function refreshSpeedtest() {
   }
 }
 
+// The remaining three panels all move far more slowly than the live latency
+// chart — an hourly box changes once an hour, a speed test runs every few
+// hours, and a restart is a rare event. Polling them at the ping rate would be
+// thousands of pointless queries a day on a Pi 3.
+const SLOW_POLL_INTERVAL_MS = 300000;
+
+async function fetchJson(url) {
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(`the server returned ${response.status}`);
+  }
+  return response.json();
+}
+
+function setNote(element, message, isError) {
+  element.textContent = message;
+  element.classList.toggle("error", Boolean(isError));
+}
+
+// --- ping latency, boxed by hour -------------------------------------------
+
+const hourlyChart = echarts.init(document.getElementById("hourly-chart"), null, {
+  renderer: "canvas",
+});
+const hourlyNote = document.getElementById("hourly-note");
+
+function hourLabel(iso) {
+  const when = new Date(iso);
+  return when.getHours().toString().padStart(2, "0") + ":00";
+}
+
+function boxplotTooltip(params) {
+  // params.value for a boxplot is [categoryIndex, low, q1, median, q3, high],
+  // so the five statistics start at index 1 rather than 0.
+  const [, low, q1, median, q3, high] = params.value;
+  const count = params.data.count;
+  return (
+    `${params.name} &middot; ${params.seriesName}<br>` +
+    `max ${high.toFixed(1)} ms<br>` +
+    `upper quartile ${q3.toFixed(1)} ms<br>` +
+    `median ${median.toFixed(1)} ms<br>` +
+    `lower quartile ${q1.toFixed(1)} ms<br>` +
+    `min ${low.toFixed(1)} ms<br>` +
+    `from ${count} ping${count === 1 ? "" : "s"}`
+  );
+}
+
+function hourlyOptions(hours, targets) {
+  return {
+    color: SERIES_COLOURS,
+    tooltip: { trigger: "item", formatter: boxplotTooltip },
+    legend: { top: 0, textStyle: { color: AXIS_INK } },
+    grid: { left: 48, right: 16, top: 36, bottom: 40 },
+    xAxis: {
+      type: "category",
+      data: hours,
+      axisLine: { lineStyle: { color: GRID_INK } },
+      axisLabel: { color: AXIS_INK },
+      // 24 hours of labels will not fit on a phone, so ECharts drops every
+      // other one rather than overlapping them.
+      axisTick: { alignWithLabel: true },
+    },
+    yAxis: {
+      type: "value",
+      name: "ms",
+      nameTextStyle: { color: AXIS_INK },
+      axisLabel: { color: AXIS_INK },
+      splitLine: { lineStyle: { color: GRID_INK } },
+    },
+    series: targets,
+  };
+}
+
+function boxesByTarget(buckets, hours) {
+  // Every target gets an entry for every hour on the axis, so the boxes line
+  // up under the right label even when one target has a gap the others do not.
+  const positions = new Map(hours.map((hour, index) => [hour, index]));
+  const byTarget = new Map();
+
+  for (const bucket of buckets) {
+    if (!byTarget.has(bucket.target)) {
+      byTarget.set(bucket.target, new Array(hours.length).fill(null));
+    }
+    byTarget.get(bucket.target)[positions.get(bucket.hour)] = {
+      value: [bucket.low, bucket.q1, bucket.median, bucket.q3, bucket.high],
+      count: bucket.count,
+    };
+  }
+
+  return [...byTarget.keys()].sort().map((target) => ({
+    name: target,
+    type: "boxplot",
+    data: byTarget.get(target),
+  }));
+}
+
+async function refreshHourly() {
+  try {
+    const body = await fetchJson("/api/ping/hourly");
+
+    if (body.buckets.length === 0) {
+      setNote(hourlyNote, "No pings recorded in the last 24 hours yet", false);
+      hourlyChart.clear();
+      return;
+    }
+
+    const hours = [...new Set(body.buckets.map((bucket) => bucket.hour))];
+    const series = boxesByTarget(body.buckets, hours);
+
+    hourlyChart.setOption(
+      hourlyOptions(hours.map(hourLabel), series),
+      { replaceMerge: ["series", "xAxis"] }
+    );
+    setNote(hourlyNote, `${hours.length} of the last ${body.hours} hours`, false);
+  } catch (error) {
+    setNote(hourlyNote, `Could not load the hourly summary: ${error.message}`, true);
+  }
+}
+
+// --- speed test history ----------------------------------------------------
+
+const historyChart = echarts.init(document.getElementById("history-chart"), null, {
+  renderer: "canvas",
+});
+const historyNote = document.getElementById("history-note");
+const historyRange = document.getElementById("history-range");
+
+let historyDays = 7;
+
+function historyOptions(series) {
+  return {
+    color: SERIES_COLOURS,
+    tooltip: {
+      trigger: "axis",
+      axisPointer: { type: "cross", label: { backgroundColor: GRID_INK } },
+    },
+    legend: { top: 0, textStyle: { color: AXIS_INK } },
+    grid: { left: 52, right: 52, top: 36, bottom: 32 },
+    xAxis: {
+      type: "time",
+      axisLine: { lineStyle: { color: GRID_INK } },
+      axisLabel: { color: AXIS_INK },
+    },
+    // Throughput and latency share no scale, so latency gets its own axis on
+    // the right rather than being flattened against a line-speed range.
+    yAxis: [
+      {
+        type: "value",
+        name: "Mbps",
+        nameTextStyle: { color: AXIS_INK },
+        axisLabel: { color: AXIS_INK },
+        splitLine: { lineStyle: { color: GRID_INK } },
+      },
+      {
+        type: "value",
+        name: "ms",
+        nameTextStyle: { color: AXIS_INK },
+        axisLabel: { color: AXIS_INK },
+        splitLine: { show: false },
+      },
+    ],
+    series,
+  };
+}
+
+function historySeries(results) {
+  const points = (field) =>
+    results.map((row) => [new Date(row.timestamp).getTime(), row[field]]);
+
+  return [
+    { name: "Download", type: "line", yAxisIndex: 0, data: points("download_mbps") },
+    { name: "Upload", type: "line", yAxisIndex: 0, data: points("upload_mbps") },
+    { name: "Latency", type: "line", yAxisIndex: 1, data: points("ping_ms") },
+  ].map((series) => ({
+    ...series,
+    showSymbol: true,
+    symbolSize: 5,
+    lineStyle: { width: 2 },
+    // A failed run has no readings, so it arrives as a null and leaves a gap.
+    // Joining across it would draw a line through an outage.
+    connectNulls: false,
+  }));
+}
+
+async function refreshHistory() {
+  try {
+    const body = await fetchJson(`/api/speedtest/history?days=${historyDays}`);
+
+    if (body.results.length === 0) {
+      setNote(historyNote, `No speed tests in the last ${body.days} days`, false);
+      historyChart.clear();
+      return;
+    }
+
+    historyChart.setOption(historyOptions(historySeries(body.results)), {
+      replaceMerge: ["series"],
+    });
+
+    const failures = body.results.filter((row) => !row.success).length;
+    const failureNote = failures === 0 ? "" : `, ${failures} failed`;
+    setNote(
+      historyNote,
+      `${body.results.length} tests over ${body.days} days${failureNote}`,
+      false
+    );
+  } catch (error) {
+    setNote(historyNote, `Could not load the history: ${error.message}`, true);
+  }
+}
+
+historyRange.addEventListener("click", (event) => {
+  const button = event.target.closest("button[data-days]");
+  if (!button) return;
+
+  historyDays = Number(button.dataset.days);
+  for (const other of historyRange.querySelectorAll("button")) {
+    const selected = other === button;
+    other.classList.toggle("selected", selected);
+    other.setAttribute("aria-pressed", String(selected));
+  }
+  refreshHistory();
+});
+
+// --- restarts --------------------------------------------------------------
+
+const restartRows = document.getElementById("restart-rows");
+const restartNote = document.getElementById("restart-note");
+const hideExpected = document.getElementById("hide-expected");
+
+function restartRow(restart) {
+  const row = document.createElement("tr");
+  const cells = [
+    new Date(restart.timestamp).toLocaleString(),
+    restart.expected ? "Scheduled" : "Unexpected",
+    restart.reason || "—",
+  ];
+
+  for (const [index, text] of cells.entries()) {
+    const cell = document.createElement("td");
+    // textContent, not innerHTML: the reason is stored data, and this is the
+    // one place on the page that renders it.
+    cell.textContent = text;
+    if (index === 1 && !restart.expected) cell.classList.add("unexpected");
+    row.appendChild(cell);
+  }
+  return row;
+}
+
+async function refreshRestarts() {
+  try {
+    const include = hideExpected.checked ? "false" : "true";
+    const body = await fetchJson(`/api/restarts?include_expected=${include}`);
+
+    restartRows.replaceChildren(...body.restarts.map(restartRow));
+
+    if (body.restarts.length === 0) {
+      setNote(
+        restartNote,
+        hideExpected.checked
+          ? "No unexpected restarts recorded"
+          : "No restarts recorded yet",
+        false
+      );
+      return;
+    }
+    setNote(restartNote, `Showing the last ${body.restarts.length}`, false);
+  } catch (error) {
+    setNote(restartNote, `Could not load the restarts: ${error.message}`, true);
+  }
+}
+
+hideExpected.addEventListener("change", refreshRestarts);
+
+// --- polling ---------------------------------------------------------------
+
+window.addEventListener("resize", () => {
+  hourlyChart.resize();
+  historyChart.resize();
+});
+
 refresh();
 setInterval(refresh, POLL_INTERVAL_MS);
 
 refreshSpeedtest();
 setInterval(refreshSpeedtest, SPEEDTEST_POLL_INTERVAL_MS);
+
+refreshHourly();
+setInterval(refreshHourly, SLOW_POLL_INTERVAL_MS);
+
+refreshHistory();
+setInterval(refreshHistory, SLOW_POLL_INTERVAL_MS);
+
+refreshRestarts();
+setInterval(refreshRestarts, SLOW_POLL_INTERVAL_MS);

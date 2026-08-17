@@ -75,7 +75,9 @@ virtualConsole.forwardTo(console, { jsdomErrors: "none" });
 const PENDING = "pending…";
 
 // Mirrors the real dashboard.html closely enough for dashboard.js to find what
-// it looks for, including the initial status text it replaces.
+// it looks for, including the initial status text it replaces. Every element
+// the page script reaches for has to be here: it addresses them directly and
+// does not guard against nulls, because on the real page they always exist.
 const dom = new JSDOM(
   `<!doctype html><html><body>
      <p class="status" id="status">Loading&hellip;</p>
@@ -86,6 +88,18 @@ const dom = new JSDOM(
        <p id="speedtest-meta">${PENDING}</p>
      </section>
      <div id="latency-chart" style="width:900px;height:480px"></div>
+     <p id="hourly-note">${PENDING}</p>
+     <div id="hourly-chart" style="width:900px;height:480px"></div>
+     <div id="history-range">
+       <button type="button" data-days="1">24h</button>
+       <button type="button" data-days="7" class="selected">7d</button>
+       <button type="button" data-days="30">30d</button>
+     </div>
+     <p id="history-note">${PENDING}</p>
+     <div id="history-chart" style="width:900px;height:480px"></div>
+     <table><tbody id="restart-rows"></tbody></table>
+     <p id="restart-note">${PENDING}</p>
+     <input type="checkbox" id="hide-expected">
    </body></html>`,
   { pretendToBeVisual: true, virtualConsole }
 );
@@ -96,18 +110,21 @@ global.navigator = dom.window.navigator;
 
 const echarts = require(path.join(REPO, "bbmon/web/static/vendor/echarts.min.js"));
 
-let chart = null;
+// The page now builds three charts, so they are kept by the id of the element
+// each was asked to render into rather than as a single handle.
+const charts = new Map();
 const realInit = echarts.init;
-echarts.init = function (_element, theme, _options) {
+echarts.init = function (element, theme, _options) {
   // The only deliberate substitution: canvas needs a real browser, so this
   // renders through ECharts' server-side SVG mode instead.
-  chart = realInit(null, theme, {
+  const created = realInit(null, theme, {
     renderer: "svg",
     ssr: true,
     width: 900,
     height: 480,
   });
-  return chart;
+  charts.set(element ? element.id : `chart-${charts.size}`, created);
+  return created;
 };
 global.echarts = echarts;
 
@@ -126,17 +143,24 @@ require(path.join(REPO, "bbmon/web/static/dashboard.js"));
 
 const statusElement = document.getElementById("status");
 const speedtestMetaElement = document.getElementById("speedtest-meta");
+const hourlyNoteElement = document.getElementById("hourly-note");
+const historyNoteElement = document.getElementById("history-note");
+const restartNoteElement = document.getElementById("restart-note");
 const startedAt = Date.now();
 
 function whenRendered() {
   return new Promise((resolve, reject) => {
     const poll = realSetInterval(() => {
-      // Both panels are polled independently, so both have to have written
-      // before anything is read — otherwise the speed test is judged on
-      // whatever the DOM happened to hold when the chart finished first.
-      const chartDone = statusElement.textContent !== "Loading…";
-      const speedtestDone = speedtestMetaElement.textContent !== PENDING;
-      if (chartDone && speedtestDone) {
+      // Every panel is polled on its own timer, so all of them have to have
+      // written before anything is read — otherwise a panel is judged on
+      // whatever the DOM happened to hold when the fastest one finished.
+      const done =
+        statusElement.textContent !== "Loading…" &&
+        speedtestMetaElement.textContent !== PENDING &&
+        hourlyNoteElement.textContent !== PENDING &&
+        historyNoteElement.textContent !== PENDING &&
+        restartNoteElement.textContent !== PENDING;
+      if (done) {
         clearInterval(poll);
         resolve();
       } else if (Date.now() - startedAt > RENDER_TIMEOUT_MS) {
@@ -177,6 +201,124 @@ function speedtestProblems() {
   return [];
 }
 
+function textIn(svg) {
+  return [...svg.matchAll(/<text[^>]*>([^<]*)<\/text>/g)]
+    .map((m) => m[1].trim())
+    .filter(Boolean);
+}
+
+function seriesNames(chart) {
+  return (chart.getOption().series || []).map((s) => s.name);
+}
+
+/** The live latency chart: one line per target, with a legend and a unit. */
+function latencyProblems(svg) {
+  const series = seriesNames(charts.get("latency-chart"));
+  const lines = [...svg.matchAll(/<path[^>]*\bd="([^"]*)"/g)]
+    .map((m) => (m[1].match(/L/g) || []).length + 1)
+    .filter((points) => points > 5);
+  const text = textIn(svg);
+
+  console.log(`latency: ${series.join(", ")}`);
+  console.log(`lines:   ${lines.length} drawn, ${lines.join("/")} points`);
+
+  const problems = [];
+  if (lines.length !== series.length) {
+    problems.push(`${series.length} series but ${lines.length} lines drawn`);
+  }
+  for (const name of series) {
+    if (!text.includes(name)) problems.push(`${name} missing from the legend`);
+  }
+  if (!text.includes("ms")) problems.push("the latency chart lost its y axis unit");
+  return problems;
+}
+
+/**
+ * The hourly box plot. Boxes are drawn as <path> elements like the lines are,
+ * so this checks the series and the hour labels rather than counting shapes:
+ * what would actually go wrong is boxes landing under the wrong hour, or the
+ * targets overlapping into one column.
+ */
+function hourlyProblems() {
+  const note = hourlyNoteElement.textContent;
+  console.log(`hourly:  ${note}`);
+
+  if (note.startsWith("Could not load")) {
+    return ["the hourly summary could not load its data"];
+  }
+  if (note.startsWith("No pings recorded")) {
+    return [];
+  }
+
+  const chart = charts.get("hourly-chart");
+  const option = chart.getOption();
+  const hours = (option.xAxis || [])[0]?.data || [];
+  const series = option.series || [];
+  const svg = chart.renderToSVGString();
+  const labels = textIn(svg);
+
+  console.log(`  boxes: ${series.length} targets over ${hours.length} hours`);
+
+  const problems = [];
+  if (series.length === 0) problems.push("the box plot drew no series");
+  for (const one of series) {
+    if (one.type !== "boxplot") problems.push(`${one.name} is a ${one.type}, not a boxplot`);
+    if (one.data.length !== hours.length) {
+      problems.push(
+        `${one.name} has ${one.data.length} boxes for ${hours.length} hours`
+      );
+    }
+  }
+  if (hours.length && !labels.includes(hours[0])) {
+    problems.push(`the hour axis is missing its first label ${hours[0]}`);
+  }
+  return problems;
+}
+
+/** The speed test history: three named series against two y axes. */
+function historyProblems() {
+  const note = historyNoteElement.textContent;
+  console.log(`history: ${note}`);
+
+  if (note.startsWith("Could not load")) {
+    return ["the speed test history could not load its data"];
+  }
+  if (note.startsWith("No speed tests")) {
+    return [];
+  }
+
+  const chart = charts.get("history-chart");
+  const names = seriesNames(chart);
+  const labels = textIn(chart.renderToSVGString());
+
+  const problems = [];
+  for (const expected of ["Download", "Upload", "Latency"]) {
+    if (!names.includes(expected)) problems.push(`${expected} missing from the history`);
+    if (!labels.includes(expected)) problems.push(`${expected} missing from its legend`);
+  }
+  // Throughput and latency share no scale, so losing the second axis would
+  // flatten latency against the line speed rather than fail visibly.
+  for (const unit of ["Mbps", "ms"]) {
+    if (!labels.includes(unit)) problems.push(`the history lost its ${unit} axis`);
+  }
+  return problems;
+}
+
+/** The restart table: rows rendered, or a note saying why there are none. */
+function restartProblems() {
+  const note = restartNoteElement.textContent;
+  const rows = document.getElementById("restart-rows").children.length;
+  console.log(`restarts: ${rows} rows — ${note}`);
+
+  if (note.startsWith("Could not load")) {
+    return ["the restart list could not load its data"];
+  }
+  if (note.startsWith("No restarts") || note.startsWith("No unexpected")) {
+    return rows === 0 ? [] : ["the restart list says it is empty but drew rows"];
+  }
+  return rows === 0 ? ["the restart list reported rows but drew none"] : [];
+}
+
 function report(svg) {
   const status = statusElement.textContent;
   console.log(`status:  ${status}`);
@@ -186,8 +328,7 @@ function report(svg) {
     return 1;
   }
 
-  const series = (chart.getOption().series || []).map((s) => s.name);
-  if (series.length === 0) {
+  if (seriesNames(charts.get("latency-chart")).length === 0) {
     console.log(
       `\nNo data in the window yet. Start the pinger and wait for its first ` +
         `flush, then run this again.`
@@ -195,40 +336,27 @@ function report(svg) {
     return 2;
   }
 
-  const lines = [...svg.matchAll(/<path[^>]*\bd="([^"]*)"/g)]
-    .map((m) => (m[1].match(/L/g) || []).length + 1)
-    .filter((points) => points > 5);
-  const text = [...svg.matchAll(/<text[^>]*>([^<]*)<\/text>/g)]
-    .map((m) => m[1].trim())
-    .filter(Boolean);
-
-  console.log(`series:  ${series.join(", ")}`);
-  console.log(`lines:   ${lines.length} drawn, ${lines.join("/")} points`);
-  console.log(`labels:  ${text.join(" ")}`);
-
-  const problems = [];
-  if (lines.length !== series.length) {
-    problems.push(`${series.length} series but ${lines.length} lines drawn`);
-  }
-  for (const name of series) {
-    if (!text.includes(name)) problems.push(`${name} missing from the legend`);
-  }
-  if (!text.includes("ms")) problems.push("the y axis lost its unit");
-  problems.push(...speedtestProblems());
+  const problems = [
+    ...latencyProblems(svg),
+    ...hourlyProblems(),
+    ...historyProblems(),
+    ...restartProblems(),
+    ...speedtestProblems(),
+  ];
 
   if (problems.length) {
     console.error(`\nFAIL: ${problems.join("; ")}`);
     return 1;
   }
 
-  console.log(`\nOK: ${lines.length} series drawn with axes and a legend.`);
+  console.log(`\nOK: every panel drew.`);
   return 0;
 }
 
 async function main() {
   await whenRendered();
 
-  const svg = chart.renderToSVGString();
+  const svg = charts.get("latency-chart").renderToSVGString();
   fs.mkdirSync(OUT_DIR, { recursive: true });
 
   const svgPath = path.join(OUT_DIR, "dashboard.svg");

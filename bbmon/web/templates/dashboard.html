@@ -9,7 +9,7 @@
 <body>
   <header>
     <h1>bbmon</h1>
-    <p class="status" id="status">Loading…</p>
+    <p class="status" id="status">Loading&hellip;</p>
   </header>
 
   <main>
@@ -38,6 +38,44 @@
     <section class="card">
       <h2>Ping latency &mdash; last 2 hours</h2>
       <div id="latency-chart" class="chart"></div>
+    </section>
+
+    <section class="card">
+      <div class="card-head">
+        <h2>Ping latency &mdash; last 24 hours, by hour</h2>
+        <p class="card-note" id="hourly-note">Loading&hellip;</p>
+      </div>
+      <div id="hourly-chart" class="chart"></div>
+    </section>
+
+    <section class="card">
+      <div class="card-head">
+        <h2>Speed test history</h2>
+        <div class="controls" id="history-range" role="group" aria-label="History range">
+          <button type="button" data-days="1">24h</button>
+          <button type="button" data-days="7" class="selected" aria-pressed="true">7d</button>
+          <button type="button" data-days="30">30d</button>
+        </div>
+      </div>
+      <div id="history-chart" class="chart"></div>
+      <p class="card-note" id="history-note">Loading&hellip;</p>
+    </section>
+
+    <section class="card">
+      <div class="card-head">
+        <h2>Restarts</h2>
+        <label class="controls toggle">
+          <input type="checkbox" id="hide-expected">
+          Hide expected
+        </label>
+      </div>
+      <table class="restarts">
+        <thead>
+          <tr><th>When</th><th>Kind</th><th>Reason</th></tr>
+        </thead>
+        <tbody id="restart-rows"></tbody>
+      </table>
+      <p class="card-note" id="restart-note">Loading&hellip;</p>
     </section>
   </main>
 
