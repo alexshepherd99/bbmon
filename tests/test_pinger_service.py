@@ -94,3 +94,19 @@ def test_a_misconfigured_reboot_action_stops_the_service_starting(
     monkeypatch.setenv(reboot.REBOOT_ACTION_ENV_VAR, "sytemctl")
 
     assert pinger.main() == 1
+
+
+def test_a_database_moved_out_from_under_the_watcher_stops_the_service(
+    config_file: Path, captured: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """End to end: this config's database is in tmp, so the trigger would be too.
+
+    On the Pi that combination means every reboot request is written where
+    bbmon-reboot.path is not looking. The service refuses to start instead,
+    which systemd and deploy.sh both report; a Pi that has quietly stopped
+    rebooting reports nothing.
+    """
+    monkeypatch.setenv(reboot.REBOOT_ACTION_ENV_VAR, "systemd")
+
+    assert pinger.main() == 1
+    assert "between_cycles" not in captured

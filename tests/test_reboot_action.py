@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from bbmon import reboot
+from bbmon.config import Config
 from bbmon.reboot import (
     NoOpReboot,
     RebootError,
@@ -113,13 +114,45 @@ def test_the_development_default_is_the_no_op(trigger_file: Path) -> None:
     assert isinstance(action_from_environment(trigger_file, {}), NoOpReboot)
 
 
-def test_the_pi_units_ask_for_the_real_thing(trigger_file: Path) -> None:
+def test_the_pi_units_ask_for_the_real_thing() -> None:
     assert isinstance(
         action_from_environment(
-            trigger_file, {reboot.REBOOT_ACTION_ENV_VAR: "systemd"}
+            reboot.WATCHED_TRIGGER_PATH, {reboot.REBOOT_ACTION_ENV_VAR: "systemd"}
         ),
         SystemdPathReboot,
     )
+
+
+def test_the_default_database_puts_the_trigger_where_systemd_watches() -> None:
+    """The units name the file literally; the code works it out from config."""
+    assert reboot.trigger_file_path(Config().database_path) == (
+        reboot.WATCHED_TRIGGER_PATH
+    )
+
+
+def test_a_trigger_nobody_watches_stops_the_service_starting(
+    trigger_file: Path,
+) -> None:
+    """The join between config and the unit files, which nothing else checks.
+
+    Move database.path and the trigger moves with it, out from under
+    bbmon-reboot.path — leaving a service that asks for reboots into thin air
+    and a Pi that never reboots. Refused at startup rather than discovered a
+    fortnight later.
+    """
+    with pytest.raises(RebootError) as raised:
+        action_from_environment(
+            trigger_file, {reboot.REBOOT_ACTION_ENV_VAR: "systemd"}
+        )
+
+    assert str(reboot.WATCHED_TRIGGER_PATH) in str(raised.value)
+
+
+def test_the_development_no_op_does_not_care_where_the_trigger_would_go(
+    trigger_file: Path,
+) -> None:
+    """Dev writes its database wherever it likes, and reboots nothing."""
+    assert isinstance(action_from_environment(trigger_file, {}), NoOpReboot)
 
 
 def test_an_unrecognised_setting_is_refused_rather_than_assumed(

@@ -61,6 +61,12 @@ REBOOT_REQUEST_FILENAME = "reboot-requested"
 #: file above, which is a record rather than a trigger and outlives the reboot.
 REBOOT_TRIGGER_FILENAME = "reboot-now"
 
+#: The trigger path spelled out literally in ``bbmon-reboot.path`` and
+#: ``bbmon-reboot.service``. The code derives its own from ``database.path``,
+#: so the two agree only while that setting points into the state directory —
+#: :func:`action_from_environment` refuses the real action when they diverge.
+WATCHED_TRIGGER_PATH = Path("/var/lib/bbmon/reboot-now")
+
 #: Chooses the reboot implementation. Unset means the no-op, so a development
 #: machine cannot reboot itself by accident; the Pi's units opt in explicitly.
 REBOOT_ACTION_ENV_VAR = "BBMON_REBOOT"
@@ -286,9 +292,11 @@ def action_from_environment(
     """Pick the reboot implementation named by ``BBMON_REBOOT``.
 
     :param trigger_path: Where the systemd implementation writes, from
-        :func:`trigger_file_path`. Ignored by the no-op.
-    :raises RebootError: for an unrecognised value. A typo in a unit file
-        would otherwise disable rebooting for good, and look like nothing.
+        :func:`trigger_file_path`. Ignored by the no-op, which reboots nothing
+        and so does not care where a development database lives.
+    :raises RebootError: for an unrecognised value, or for a trigger path no
+        unit is watching. Either one would otherwise disable rebooting for
+        good and look like nothing at all.
     """
     if environ is None:
         environ = os.environ
@@ -297,11 +305,38 @@ def action_from_environment(
     if setting == _ACTION_NOOP:
         return NoOpReboot()
     if setting == _ACTION_SYSTEMD:
+        _require_watched(Path(trigger_path))
         return SystemdPathReboot(trigger_path)
 
     raise RebootError(
         f"{REBOOT_ACTION_ENV_VAR}={setting!r} is not a reboot action; "
         f"expected {_ACTION_NOOP!r} or {_ACTION_SYSTEMD!r}"
+    )
+
+
+def _require_watched(trigger_path: Path) -> None:
+    """Refuse a trigger that no unit is watching.
+
+    The unit files name the trigger literally while the code derives it from
+    ``database.path``, so moving that setting moves the trigger out from under
+    ``bbmon-reboot.path``. Writing to it would keep succeeding and the Pi would
+    simply never reboot, which is the one failure this mechanism cannot
+    otherwise report. At M6 the admin page can set ``database.path``, so this
+    is also the rule that form has to validate against.
+    """
+    if trigger_path == WATCHED_TRIGGER_PATH:
+        return
+
+    logger.error(
+        "The reboot trigger would be %s, but bbmon-reboot.path watches %s",
+        trigger_path,
+        WATCHED_TRIGGER_PATH,
+    )
+    raise RebootError(
+        f"the reboot trigger would be written to {trigger_path}, but "
+        f"bbmon-reboot.path watches {WATCHED_TRIGGER_PATH} — nothing would "
+        f"notice it. Set database.path back to a file in "
+        f"{WATCHED_TRIGGER_PATH.parent}, or update the unit files to match."
     )
 
 

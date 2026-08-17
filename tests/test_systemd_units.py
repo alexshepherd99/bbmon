@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from bbmon.reboot import trigger_file_path
+from bbmon.reboot import WATCHED_TRIGGER_PATH, trigger_file_path
 
 UNIT_DIR = Path(__file__).resolve().parent.parent / "deploy" / "systemd"
 
@@ -208,8 +208,13 @@ def test_the_watcher_will_not_run_without_a_working_init() -> None:
 
 
 def test_the_trigger_is_the_path_the_code_writes() -> None:
-    """The units and bbmon.reboot have to name the same file to work at all."""
+    """The units and bbmon.reboot have to name the same file to work at all.
+
+    The units say it literally, the code derives it from database.path, and
+    WATCHED_TRIGGER_PATH is the constant that keeps the two honest at runtime.
+    """
     assert TRIGGER_FILE == str(trigger_file_path("/var/lib/bbmon/bbmon.db"))
+    assert TRIGGER_FILE == str(WATCHED_TRIGGER_PATH)
 
 
 def test_the_reboot_unit_does_not_pretend_to_be_sandboxed() -> None:
