@@ -391,3 +391,13 @@ Next: G2 and G3 — the two uncleared gates, both needing a home visit, and G3 i
 Seen on a desktop screen after M5 landed, and **deferred to a later session by agreement**. Three requests: fit 1920×1080 without scrolling, put the two ping charts side by side, and bring the restart panel up beside the speed test readings. Written up under "Open items" in `plan.md` with the two questions the request leaves open — where the speed test history chart then goes, and how the chart heights get derived once two rows of them have to fit in 1080px against a `min-height` floor that currently overrides anything small enough.
 
 Recorded here because it is feedback on a deliverable rather than a defect: M5 met requirement 7 as written, which asks for a mobile-friendly layout and says nothing about a desktop one. The no-scrolling constraint applies to wide viewports only — the phone layout still has to stack and scroll.
+
+## 2026-08-17 — Pre-aggregation confirmed as an agreed decision, on the spikes
+
+The M5 entry above records applying pre-aggregation to the hourly box plot only as a reading of requirement 7 that I took while building. That understates it, and it has been promoted to an agreed decision in `plan.md` with the reason stated as the governing one rather than as one factor among several.
+
+**Latency spikes must stay visible, and averaging is what would hide them.** A spike is a primary signal — it is the thing worth seeing — and at a five-second interval a per-minute bucket folds twelve samples into one number, so a single bad ping vanishes into eleven good ones. That is not a performance trade-off to be revisited when the Pi feels slow: the short-term chart reads raw rows, and averaging is not to be introduced into it later as an optimisation. If it needs to get cheaper the levers are the window, the cache, and client-side downsampling that preserves extremes.
+
+Worth noting the box plot does not conflict with this. Min and max are two of the five values it draws, so the whiskers carry the worst ping in each hour rather than smoothing it away — aggregation there summarises the distribution without discarding its tail.
+
+Requirement 7's own wording has been qualified in `requirements.md` to match, so a later reader does not record the short-term chart as an unmet requirement and "fix" it.

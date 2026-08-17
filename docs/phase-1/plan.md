@@ -67,6 +67,12 @@ The four items under "Open decisions" in `requirements.md`, plus the ones this p
 - **Purge job placement** — inside the pinger service's existing loop as a daily check, not a separate systemd timer. One fewer unit to install, secure and reason about.
 - **Default ping targets** — ship `8.8.8.8`, `1.1.1.1`, `google.com` as documented. It is a config default, editable from the admin page, so it is not worth further deliberation. (Adding the router as a target is `BACKLOG.md` item 1, not phase 1.)
 - **Ping implementation** — shell out to the system `ping` binary with an argv list (never `shell=True`), rather than raw sockets. The system binary is already setuid/setcap, so it works unprivileged on both Crostini and the Pi, and the service needs no `CAP_NET_RAW` grant.
+- **Pre-aggregation applies to the hourly box plot only, and never to the live latency chart.** Agreed 2026-08-17. Requirement 7 asks chart queries to use pre-aggregated data rather than raw rows; that is read as "where the volume warrants it", not as a rule for all three charts.
+
+  **The governing constraint is that latency spikes must stay visible.** They are a primary signal — a spike is the thing worth seeing — and averaging is exactly what would hide one: at a five-second interval, per-minute buckets fold twelve samples into one number and a single bad ping disappears into eleven good ones. So the live 2-hour chart reads raw rows, and no averaging is to be introduced into it later as a performance measure. If that chart ever needs to get cheaper, the levers are the window, the cache and client-side downsampling that preserves extremes — not the mean.
+
+  The box plot is where aggregation belongs, and it keeps the spikes too: min and max are two of the five values it draws, so the whiskers show the worst ping in the hour rather than smoothing it away. The speed test history reads raw rows simply because 30 days is a few hundred of them.
+
 - **Front-end assets are vendored, never loaded from a CDN.** Keeps the dashboard working without internet access and keeps third-party script execution off a page that can reboot the Pi. The specific charting library is chosen at M5, not now.
 
 ## Security posture
@@ -112,7 +118,5 @@ Deferred to `BACKLOG.md` as hardening rather than hole-closing: a host firewall 
   Two things need deciding when it is picked up, because the request does not settle them. **Where the speed test history chart goes** — it is the panel with no place left in the arrangement above, and putting it on a third row is what the no-scrolling constraint will fight. And **how the chart heights are derived**: they are `42vh` with a `min-height: 240px` floor today, and two rows of charts at that height plus a header, a readings panel, a restart table and a footer do not fit in 1080px. The floor in particular will override any vh figure small enough to fit.
 
   Note this constrains **wide viewports only**. Requirement 7's mobile layout still has to stack and scroll, so "no scrolling" is a `min-width` rule, not a property of the page.
-
-- **Pre-aggregation is applied to the box plot only**, not to all three charts, though requirement 7's wording reaches all of them. The live 2-hour chart keeps raw rows because per-minute averaging would erase the latency spikes above, which are what that chart is for; the speed test history keeps them because 30 days is a few hundred rows. Settled at M5 — recorded here because it is a deliberate reading of the requirement rather than an omission.
 
 - **The build stamp can lie if a deploy script fails between copying files and writing it.** Accepted knowingly at M5 when the mechanism was chosen. `set -e` and the write ordering keep the window narrow, and the alternative — a digest derived from the deployed bytes — was rejected as harder to read for a gain only visible in a case the scripts already abort on. No action; recorded so it is not later mistaken for an oversight.

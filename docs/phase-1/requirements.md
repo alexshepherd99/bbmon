@@ -109,7 +109,7 @@ A shared Python package (e.g. `bbmon/`) holds common code: config loader, DB acc
   - **Ping latency — short term**: simple line chart, last 2 hours, per target
   - **Ping latency — long term**: box plot, last 1 day of data, boxed hourly
   - **Speed test history**: download/upload/ping over time, with a selectable time range (e.g. last 24h / 7d / 30d), since speed test data is retained indefinitely and could grow large
-  - Chart queries use pre-aggregated data (e.g. hourly averages) rather than raw rows, to stay responsive on low-spec hardware
+  - Chart queries use pre-aggregated data (e.g. hourly averages) rather than raw rows, to stay responsive on low-spec hardware — **where the volume warrants it, which is the hourly box plot.** The short-term latency chart reads raw rows on purpose: latency spikes must stay visible, and averaging is what would hide them. Agreed 2026-08-17; the reasoning is under "Decisions taken with this plan" in `plan.md`
 - Reboot list: last 20 (configurable) restarts, with a toggle to exclude expected (self-triggered) restarts
 - No authentication (trusted LAN)
 
