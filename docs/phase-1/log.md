@@ -385,3 +385,9 @@ The weakness of this mechanism was accepted knowingly rather than engineered aro
 **Not verified.** Nothing in M5 has run on the Pi. Two items are specifically outstanding and neither can be settled here: **the build stamp has never been written by either script**, since both need a Pi to run at all, and **the box plot query has never been timed on a Pi 3**, where it is the one query with enough volume to matter. Both are now on G4. The mobile layout is written but has still never been seen on a phone — the same item G1 carried forward. Everything else was exercised against a running app: all five panels drew, the range selector and the expected-restart toggle both re-fetch, and the headless harness passes against both the real and the synthetic databases.
 
 Next: G2 and G3 — the two uncleared gates, both needing a home visit, and G3 is worth clearing before the Pi is left running unattended. After that, M6.
+
+## 2026-08-17 — Layout feedback on the finished dashboard
+
+Seen on a desktop screen after M5 landed, and **deferred to a later session by agreement**. Three requests: fit 1920×1080 without scrolling, put the two ping charts side by side, and bring the restart panel up beside the speed test readings. Written up under "Open items" in `plan.md` with the two questions the request leaves open — where the speed test history chart then goes, and how the chart heights get derived once two rows of them have to fit in 1080px against a `min-height` floor that currently overrides anything small enough.
+
+Recorded here because it is feedback on a deliverable rather than a defect: M5 met requirement 7 as written, which asks for a mobile-friendly layout and says nothing about a desktop one. The no-scrolling constraint applies to wide viewports only — the phone layout still has to stack and scroll.

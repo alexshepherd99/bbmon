@@ -102,6 +102,17 @@ Deferred to `BACKLOG.md` as hardening rather than hole-closing: a host firewall 
 - **Collector interface shape** is settled. M3's speed test used it unchanged; what needed adjusting was the code around it, not the interface itself — see the M3 entry in `log.md`. Three strains are recorded there and none justified a change yet.
 - **A real browser has now loaded the page**, on 2026-08-12 from the Chromebook, with all three services running and real data — the latency chart and the speed test panel both drew correctly. That closes the canvas renderer and the poll timer, which the jsdom harness explicitly cannot cover, and it found the redraw-animation defect since fixed at M5. Still unverified: resize handling and the CSS layout on a **phone**, which G4 now carries.
 - **Latency spikes to roughly 30ms appeared about once a minute, on all three targets simultaneously**, during a seven-minute dev run. Simultaneity across independent targets points at something local rather than the WAN, and the period is suspiciously close to the 60s flush — but one short unrepeated run cannot separate those from ordinary jitter, and no comparison was made against a run with flushing disabled. Worth a proper look at G2, where ping behaviour under load is already on the checklist.
+- **The dashboard layout wants reworking for a desktop screen.** Feedback on M5's page, 2026-08-17, **deferred to a later session by agreement**. Three things asked for:
+  - **Fit on one screen at 1920×1080 with no scrolling.**
+  - **The two ping charts side by side** — the live 2-hour line chart and the hourly box plot.
+  - **The restart panel moved up beside the speed test readings.**
+
+  The current wide layout is one full-width row each for the readings, the live chart and the restarts, with the box plot and speed test history paired. So this is a rearrangement into roughly: readings | restarts, then live chart | box plot.
+
+  Two things need deciding when it is picked up, because the request does not settle them. **Where the speed test history chart goes** — it is the panel with no place left in the arrangement above, and putting it on a third row is what the no-scrolling constraint will fight. And **how the chart heights are derived**: they are `42vh` with a `min-height: 240px` floor today, and two rows of charts at that height plus a header, a readings panel, a restart table and a footer do not fit in 1080px. The floor in particular will override any vh figure small enough to fit.
+
+  Note this constrains **wide viewports only**. Requirement 7's mobile layout still has to stack and scroll, so "no scrolling" is a `min-width` rule, not a property of the page.
+
 - **Pre-aggregation is applied to the box plot only**, not to all three charts, though requirement 7's wording reaches all of them. The live 2-hour chart keeps raw rows because per-minute averaging would erase the latency spikes above, which are what that chart is for; the speed test history keeps them because 30 days is a few hundred rows. Settled at M5 — recorded here because it is a deliberate reading of the requirement rather than an omission.
 
 - **The build stamp can lie if a deploy script fails between copying files and writing it.** Accepted knowingly at M5 when the mechanism was chosen. `set -e` and the write ordering keep the window narrow, and the alternative — a digest derived from the deployed bytes — was rejected as harder to read for a gain only visible in a case the scripts already abort on. No action; recorded so it is not later mistaken for an oversight.
