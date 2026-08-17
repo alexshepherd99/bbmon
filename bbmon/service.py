@@ -88,7 +88,13 @@ class CollectorService:
         :param flush_on_exit: Write whatever is still buffered on the way out,
             so a clean shutdown loses nothing.
         """
-        last_flush = self._monotonic()
+        # Backdated by a full interval so the first cycle's results are written
+        # straight away. Requirement 4's buffering exists to spare the SD card
+        # thousands of small writes; one extra write per service start is not
+        # that, and without it a freshly started service left the dashboard
+        # blank for a minute — after every restart and every deploy, which
+        # looks broken rather than new.
+        last_flush = self._monotonic() - self._flush_interval_seconds
 
         try:
             while should_continue():

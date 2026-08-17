@@ -109,7 +109,27 @@ def test_results_are_buffered_rather_than_written_every_cycle(database: Path) ->
     service(database, collector, clock, flush=60).run(stop_after(3), flush_on_exit=False)
 
     assert collector.cycles == 3
-    assert row_count(database) == 0
+    # One write, not three. The first cycle is flushed immediately so the
+    # dashboard is not blank on a fresh start; the two after it wait for the
+    # interval, which is the wear the buffering exists to avoid.
+    assert row_count(database) == 1
+
+
+def test_the_first_cycle_is_written_without_waiting_for_the_interval(
+    database: Path,
+) -> None:
+    """A freshly started service otherwise leaves the dashboard blank.
+
+    Nothing was on disk until the first flush, so for a minute after every
+    start — and every deploy, which restarts the services — the page showed no
+    data at all and looked broken rather than new.
+    """
+    clock = FakeClock()
+    collector = FakeCollector(interval_seconds=5)
+
+    service(database, collector, clock, flush=60).run(stop_after(1), flush_on_exit=False)
+
+    assert row_count(database) == 1
 
 
 def test_the_buffer_is_written_once_the_flush_interval_elapses(database: Path) -> None:
