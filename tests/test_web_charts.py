@@ -13,7 +13,7 @@ from flask.testing import FlaskClient
 from bbmon import db
 from bbmon.config import Config
 from bbmon.models import PingResult, Restart, SpeedtestResult
-from bbmon.web.app import MAX_HISTORY_DAYS, create_app
+from bbmon.web.app import MAX_HISTORY_DAYS, SLOW_CACHE_TTL_SECONDS, create_app
 from bbmon.web.cache import TimedCache
 
 
@@ -318,10 +318,42 @@ def test_the_cache_lets_new_data_through_once_it_expires(
     client.get("/api/ping/hourly")
 
     store_pings(database, ping(5, "1.1.1.1", 20.0))
-    clock.advance(11)
+    clock.advance(SLOW_CACHE_TTL_SECONDS + 1)
     body = client.get("/api/ping/hourly").get_json()
 
     assert {bucket["target"] for bucket in body["buckets"]} == {"8.8.8.8", "1.1.1.1"}
+
+
+def test_the_slow_panels_outlive_the_default_ttl(
+    database: Path, client: FlaskClient, clock: FakeClock
+) -> None:
+    """The expensive queries are held for a poll interval, not ten seconds.
+
+    Advancing past the cache's own TTL but not past the slow one: if the
+    hourly summary fell back to the default, this new target would appear.
+    """
+    store_pings(database, ping(5, latency=10.0))
+    client.get("/api/ping/hourly")
+
+    store_pings(database, ping(5, "1.1.1.1", 20.0))
+    clock.advance(11)
+    body = client.get("/api/ping/hourly").get_json()
+
+    assert {bucket["target"] for bucket in body["buckets"]} == {"8.8.8.8"}
+
+
+def test_the_live_latency_chart_keeps_the_short_ttl(
+    database: Path, client: FlaskClient, clock: FakeClock
+) -> None:
+    """The chart that updates every five seconds must not be held for minutes."""
+    store_pings(database, ping(5, latency=10.0))
+    client.get("/api/ping")
+
+    store_pings(database, ping(5, "1.1.1.1", 20.0))
+    clock.advance(11)
+    body = client.get("/api/ping").get_json()
+
+    assert set(body["targets"]) == {"8.8.8.8", "1.1.1.1"}
 
 
 def test_different_history_ranges_do_not_share_a_cache_entry(

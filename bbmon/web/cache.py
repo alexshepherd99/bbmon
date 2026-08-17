@@ -49,7 +49,12 @@ class TimedCache:
         self._entries: dict[Any, tuple[float, Any]] = {}
         self._lock = threading.Lock()
 
-    def get_or_call(self, key: Any, produce: Callable[[], Any]) -> Any:
+    def get_or_call(
+        self,
+        key: Any,
+        produce: Callable[[], Any],
+        ttl_seconds: float | None = None,
+    ) -> Any:
         """Return the cached value for ``key``, producing it if it is stale.
 
         The lock is held across ``produce`` rather than only around the
@@ -61,10 +66,16 @@ class TimedCache:
         while the file is locked, and remembering that would turn one failed
         request into a guaranteed failure for every viewer until the entry
         expired.
+
+        :param ttl_seconds: Overrides the cache's default for this key. Data
+            that changes slowly can be held far longer than the live chart's,
+            so an expensive query is not re-run once per viewer.
         """
+        ttl = self._ttl_seconds if ttl_seconds is None else ttl_seconds
+
         with self._lock:
             entry = self._entries.get(key)
-            if entry is not None and self._clock() - entry[0] < self._ttl_seconds:
+            if entry is not None and self._clock() - entry[0] < ttl:
                 return entry[1]
 
             value = produce()

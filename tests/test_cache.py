@@ -97,6 +97,48 @@ def test_a_cached_key_is_not_reproduced_for_a_different_key() -> None:
     assert produce.calls == 1
 
 
+def test_a_longer_ttl_can_be_given_for_one_key() -> None:
+    """Slow-moving data should not be re-queried at the default rate.
+
+    The hourly summary is by far the most expensive query the dashboard makes,
+    and its buckets change once an hour, so it is given a TTL matching how
+    often the page asks for it.
+    """
+    clock = FakeClock()
+    cache = TimedCache(ttl_seconds=10, clock=clock)
+    produce = Counter()
+
+    cache.get_or_call("k", produce, ttl_seconds=300)
+    clock.advance(299)
+    cache.get_or_call("k", produce, ttl_seconds=300)
+
+    assert produce.calls == 1
+
+
+def test_a_longer_ttl_still_expires() -> None:
+    clock = FakeClock()
+    cache = TimedCache(ttl_seconds=10, clock=clock)
+    produce = Counter()
+
+    cache.get_or_call("k", produce, ttl_seconds=300)
+    clock.advance(301)
+    cache.get_or_call("k", produce, ttl_seconds=300)
+
+    assert produce.calls == 2
+
+
+def test_the_default_ttl_applies_when_none_is_given() -> None:
+    clock = FakeClock()
+    cache = TimedCache(ttl_seconds=10, clock=clock)
+    produce = Counter()
+
+    cache.get_or_call("k", produce)
+    clock.advance(11)
+    cache.get_or_call("k", produce)
+
+    assert produce.calls == 2
+
+
 def test_a_failing_producer_caches_nothing() -> None:
     """A failed query must not be remembered as an answer.
 

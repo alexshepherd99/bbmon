@@ -38,6 +38,19 @@ BOX_PLOT_HOURS = 24
 DEFAULT_HISTORY_DAYS = 7
 MAX_HISTORY_DAYS = 30
 
+#: How long the slow-moving panels' results are held, matching how often the
+#: page asks for them.
+#:
+#: The hourly summary is much the most expensive query the dashboard makes —
+#: it scans a day of pings, tens of thousands of rows, and measured around
+#: 400ms against 56k rows on the x86 development container, so the Pi 3 will
+#: be slower still by an unmeasured factor. At the default TTL every viewer's
+#: poll would miss and pay for its own run of it. Its buckets change once an
+#: hour, a speed test runs every few hours and a restart is rarer than that,
+#: so holding these for the length of a poll interval costs no visible
+#: freshness and makes the cost independent of how many people are watching.
+SLOW_CACHE_TTL_SECONDS = 300
+
 
 def create_app(config: Config, cache: TimedCache | None = None) -> Flask:
     """Build the application for a given configuration.
@@ -57,7 +70,7 @@ def create_app(config: Config, cache: TimedCache | None = None) -> Flask:
     def dashboard() -> str:
         return render_template("dashboard.html", version=__version__)
 
-    def read(key, query):
+    def read(key, query, ttl_seconds=None):
         """Run a database read through the cache.
 
         ``key`` must be built from validated parameters only, never from raw
@@ -69,7 +82,7 @@ def create_app(config: Config, cache: TimedCache | None = None) -> Flask:
             with db.connect(config.database_path) as conn:
                 return query(conn)
 
-        return cache.get_or_call(key, produce)
+        return cache.get_or_call(key, produce, ttl_seconds=ttl_seconds)
 
     @app.get("/api/ping")
     def ping_data():
@@ -104,7 +117,9 @@ def create_app(config: Config, cache: TimedCache | None = None) -> Flask:
         )
         since = this_hour - timedelta(hours=BOX_PLOT_HOURS - 1)
         buckets = read(
-            "ping-hourly", lambda conn: db.hourly_ping_summary(conn, since=since)
+            "ping-hourly",
+            lambda conn: db.hourly_ping_summary(conn, since=since),
+            ttl_seconds=SLOW_CACHE_TTL_SECONDS,
         )
 
         return jsonify(
@@ -132,6 +147,7 @@ def create_app(config: Config, cache: TimedCache | None = None) -> Flask:
         results = read(
             ("speedtest-history", days),
             lambda conn: db.speedtest_history(conn, since=since),
+            ttl_seconds=SLOW_CACHE_TTL_SECONDS,
         )
 
         return jsonify(
@@ -158,6 +174,7 @@ def create_app(config: Config, cache: TimedCache | None = None) -> Flask:
             lambda conn: db.recent_restarts(
                 conn, limit=limit, include_expected=include_expected
             ),
+            ttl_seconds=SLOW_CACHE_TTL_SECONDS,
         )
 
         return jsonify(
