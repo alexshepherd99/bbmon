@@ -226,3 +226,32 @@ def test_the_reboot_unit_does_not_pretend_to_be_sandboxed() -> None:
     service = read_unit(REBOOT_UNIT)["Service"]
     assert "User" not in service
     assert "StateDirectory" not in service
+
+
+def test_the_watcher_opts_out_of_the_default_path_dependencies() -> None:
+    """Otherwise it deadlocks the boot and systemd resolves it by not starting bbmon.
+
+    A path unit with the default dependencies is implicitly ordered
+    ``Before=paths.target``; ``basic.target`` is ``After=paths.target``; and a
+    service with the default dependencies is ``After=basic.target``. The
+    ``After=bbmon-init.service`` the test above requires therefore closes a
+    cycle::
+
+        bbmon-reboot.path -> bbmon-init.service -> basic.target
+                          -> paths.target -> bbmon-reboot.path
+
+    systemd breaks an ordering cycle by deleting one job from it, and on the Pi
+    it chose ``bbmon-init.service/start`` — the unit every other unit
+    ``Requires=``, so nothing bbmon started at all. Found on hardware at G3 on
+    2026-08-19, and intermittent: which job gets deleted is not fixed, so one
+    boot came up clean and the next came up with no monitoring running.
+
+    Opting out drops the ``Before=paths.target`` that closes the cycle. The
+    dependencies worth keeping then have to be restated by hand.
+    """
+    unit = read_unit(REBOOT_PATH_UNIT)["Unit"]
+
+    assert unit.get("DefaultDependencies") == "no"
+    assert "sysinit.target" in unit.get("After", "")
+    assert "shutdown.target" in unit.get("Conflicts", "")
+    assert "shutdown.target" in unit.get("Before", "")

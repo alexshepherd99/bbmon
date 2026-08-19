@@ -11,7 +11,30 @@ Documentation=https://github.com/alexshepherd99/bbmon
 # reboot that produced this boot has already been deleted before anything is
 # watching for it.
 Requires=bbmon-init.service
-After=bbmon-init.service
+
+# DefaultDependencies=no is what makes that After= survivable, and it is not
+# optional. A path unit with the default dependencies is implicitly ordered
+# Before=paths.target; basic.target is After=paths.target; and a service with
+# the default dependencies is After=basic.target. So the line above closes a
+# cycle:
+#
+#   bbmon-reboot.path -> bbmon-init.service -> basic.target
+#                     -> paths.target -> bbmon-reboot.path
+#
+# systemd breaks a cycle by deleting one job from it, and on the Pi it deleted
+# bbmon-init.service/start — which every other unit Requires=, so the whole of
+# bbmon failed to start. Intermittently: which job is deleted is not fixed, and
+# consecutive boots differed. Found at G3 on 2026-08-19, after this unit had
+# been shipped since M4; systemd-analyze verify does not detect ordering
+# cycles, and nothing short of a real boot would have shown it.
+#
+# Both orderings go on one line. systemd accumulates repeated After= lines, but
+# the tests read these files with configparser, which keeps only the last — so
+# a second After= would silently drop the bbmon-init ordering from view.
+DefaultDependencies=no
+After=bbmon-init.service sysinit.target
+Conflicts=shutdown.target
+Before=shutdown.target
 
 [Path]
 # PathModified=, not PathExists=. PathExists= fires when the unit starts and
