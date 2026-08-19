@@ -18,7 +18,18 @@ VENV_DIR="$INSTALL_DIR/.venv"
 # Read by the web app and shown in the dashboard footer — see BUILD_STAMP_NAME
 # in bbmon/web/app.py, and the matching constant in scripts/deploy.sh.
 BUILD_STAMP=/var/lib/bbmon/build-stamp
-UNITS=(bbmon-init.service bbmon-pinger.service bbmon-speedtest.service bbmon-web.service)
+# Reinstalled when a pull changes deploy/systemd/. This has to match what
+# bootstrap.sh installs, and tests/test_update_script.py is the join: the two
+# lists had drifted, and update.sh had never heard of either half of M4's
+# reboot mechanism — so a change to bbmon-reboot.path was pulled onto the Pi
+# and never installed, while the update reported success.
+UNITS=(bbmon-init.service bbmon-pinger.service bbmon-speedtest.service
+       bbmon-web.service bbmon-reboot.path)
+
+# Installed and never started here, for the reason bootstrap.sh gives: starting
+# bbmon-reboot.service reboots the machine.
+ON_DEMAND_UNITS=(bbmon-reboot.service)
+
 SERVICES=(bbmon-pinger.service bbmon-speedtest.service bbmon-web.service)
 
 log() { printf '\n\033[1m==> %s\033[0m\n' "$*"; }
@@ -118,12 +129,23 @@ main() {
 
   if echo "$changed" | grep -q '^deploy/systemd/'; then
     log "Unit files changed, reinstalling"
-    for unit in "${UNITS[@]}"; do
+    for unit in "${UNITS[@]}" "${ON_DEMAND_UNITS[@]}"; do
       install -o root -g root -m 0644 \
         "$INSTALL_DIR/deploy/systemd/$unit" "/etc/systemd/system/$unit"
     done
     systemctl daemon-reload
-    note "reinstalled: ${UNITS[*]}"
+    note "reinstalled: ${UNITS[*]} ${ON_DEMAND_UNITS[*]}"
+
+    # daemon-reload makes systemd read the new file; it does not re-apply it to
+    # a unit that is already running. The three services below are restarted
+    # anyway, and bbmon-init is restarted explicitly — the watcher is the one
+    # that would otherwise keep running its old configuration, which for a
+    # change to its dependencies means the update fixes nothing.
+    #
+    # Safe to restart: PathModified= does not fire on a trigger file that is
+    # merely present, confirmed on the Pi at G3.
+    systemctl restart bbmon-reboot.path
+    note "restarted bbmon-reboot.path so the new unit takes effect"
   fi
 
   log "Restarting"
@@ -153,4 +175,9 @@ main() {
   log "Updated to $(sudo -u "$owner" git rev-parse --short HEAD)"
 }
 
-main "$@"
+# Sourcing this file defines its functions and lists without updating anything,
+# which is how tests/test_update_script.py checks its unit list against
+# bootstrap.sh's without a Pi.
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+  main "$@"
+fi
