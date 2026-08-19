@@ -434,3 +434,192 @@ The test that matters most is the join the two scripts cannot check for themselv
 **What the rebuild cost.** The database went with the image, so ping and speed test history and the `restarts` table all start again from today. Nothing was backed up and nothing was recoverable; that was known before bootstrap ran rather than discovered after.
 
 **Not verified.** No reboot has been performed by this code, on any machine — G3 is untouched and remains the gate worth clearing before the Pi is left running unattended. G2 still needs SD-card write volume measured and ping latency observed during a concurrent speed test; only the "speed test produces meaningful numbers" item was met, and incidentally rather than by measurement. `update.sh` has still never run. The dashboard has still never been opened on a phone. The box plot query has still never been timed on a Pi 3, and the database is now too empty to time it against — that item needs about a day of collection before it can be attempted at all.
+
+## 2026-08-19 — G2 and G3 cleared, and the defect G3 existed to find
+
+Both outstanding gates, in one visit. Two commits of code on `main` plus this
+record. 354 tests, green. The headline is not the measurements: it is that
+**bbmon has been failing to start on boot, intermittently, since M4**, and
+nothing short of rebooting a real Pi could have shown it.
+
+### The ordering cycle
+
+The pinger asked for a reboot, the Pi went down and came back, and nothing was
+running. No pinger, no speed test, no web app, no watcher — five units, all
+`inactive/dead`, on a machine that had rebooted itself exactly as designed and
+reported nothing wrong. The boot log says why:
+
+```
+bbmon-reboot.path: Found ordering cycle on bbmon-init.service/start
+bbmon-reboot.path: Found dependency on basic.target/start
+bbmon-reboot.path: Found dependency on paths.target/start
+bbmon-reboot.path: Found dependency on bbmon-reboot.path/start
+bbmon-reboot.path: Job bbmon-init.service/start deleted to break ordering cycle
+```
+
+A path unit with the default dependencies is implicitly ordered
+`Before=paths.target`; `basic.target` is `After=paths.target`; a service with
+the default dependencies is `After=basic.target`. So the
+`After=bbmon-init.service` the watcher has carried since M4 — the line that
+makes the third loop guard work, by ensuring a leftover trigger is deleted
+before anything watches for it — closes a cycle back onto itself.
+
+**systemd breaks a cycle by deleting one job from it, and it chose the init
+job.** Every other bbmon unit `Requires=bbmon-init.service`, so deleting that
+one job took the entire system down. The fix is `DefaultDependencies=no` on the
+watcher, which drops the implicit `Before=paths.target`, with the dependencies
+worth keeping restated by hand.
+
+**Three things about this are worth keeping.**
+
+*It is intermittent, which is why it survived.* Which job systemd deletes to
+break a cycle is not fixed. Of the boots before the fix, one came up perfectly
+clean and one came up with nothing running — both observed. A third showed the
+same two symptoms (no restart row, an unconsumed `reboot-requested`) but its
+journal was gone by the time anyone looked, so it is consistent with the same
+cause rather than proof of it.
+
+*The second-order failure is worse than the first.* A boot that leaves the init
+step unrun also leaves the `reboot-requested` file unconsumed. That file is
+what makes the *next* restart read as expected — so a power cut arriving after
+a failed boot would have been recorded as a planned reboot. The M4 entry above
+argues that any scheme where the marker is not consumed has exactly this bug;
+it turns out the scheme was fine and the boot was not.
+
+*Static checking could not have found it.* `systemd-analyze verify` passes on
+these units and does not detect ordering cycles. The M4 work tested the
+`PathModified=` assumption on Crostini precisely because the boot-loop argument
+rested on it — but the units were only ever checked as syntax, and the one
+thing that was never done was to boot a machine with them installed.
+
+### Shipping the fix exposed a second defect
+
+`update.sh` reinstalls unit files when a pull touches `deploy/systemd/`, and its
+unit list held only the four service units. It has never heard of either half of
+M4's reboot mechanism. So the fix to `bbmon-reboot.path` would have been pulled
+into `/opt/bbmon` and never installed into `/etc/systemd/system`, while the
+update reported success.
+
+Same class as the `deploy.sh` sudoers join found on the rebuild earlier today:
+`bootstrap.sh` decides which units exist, `update.sh` decides which of them an
+update reinstalls, and nothing connected the two.
+`tests/test_update_script.py` is now that join, and asks both scripts for their
+own lists rather than restating either. `update.sh` also now restarts
+`bbmon-reboot.path` after reinstalling — `daemon-reload` makes systemd read a
+new file but does not re-apply it to a running unit, and the watcher is the one
+unit an update was not otherwise restarting.
+
+**A fix to a unit list cannot be delivered by the tool with the stale list.**
+The `update.sh` running on the Pi was the old one: it pulled both commits, saw
+`deploy/systemd/` change, reinstalled its four units, and left the watcher
+alone — and a second run would have said "already up to date" and reinstalled
+nothing at all. `bootstrap.sh` is the way out, which is what `deploy.sh`'s
+warning has said all along. Worth knowing before the next unit-file change.
+
+### What G3 then verified, against the fixed units
+
+Every item on the checklist, each observed rather than inferred.
+
+- The watcher is active after `bootstrap.sh`; `bbmon-reboot.service` reports
+  `static`, so it has no `[Install]` section and cannot be enabled by accident.
+- **The loop guard holds on the Pi's own systemd**, not just Crostini's. A
+  trigger left in place while nothing watched, then the watcher started on top
+  of it: `bbmon-reboot.service` stayed inactive with an empty
+  `ExecMainStartTimestamp` — it never ran — and `bbmon-init` then deleted the
+  leftover.
+- A trigger written as the `bbmon` user reboots the Pi, and the next boot
+  records `expected = true` carrying the reason from the request file.
+- **The pinger reboots the machine from inside its own sandbox.** Given a fake
+  `/proc/uptime` through a drop-in in `/run`, it decided the reboot was due,
+  wrote the trigger and went down — with `NoNewPrivileges=yes`,
+  `ProtectSystem=strict` and an empty capability bounding set, no sudo and no
+  setuid anywhere in the path. That is the whole argument for the path unit,
+  and it now has hardware behind it. The drop-in lived on tmpfs so the reboot
+  destroyed it, which is what made the test safe to run: there was no state
+  that could have looped the machine.
+- A pulled power cable is recorded as `expected = false`, at WARNING. The
+  database came back with `PRAGMA integrity_check` returning `ok`, which is
+  M1's WAL settings doing the job they were chosen for.
+- Restarting a single service adds no restart row, and `bbmon-init` stays
+  `active (exited)` rather than re-running.
+- **The NTP wait behaves on a Pi with no RTC**: 37s, 39s and 55s across three
+  boots, never near the 120s bound, and the restart row is always written after
+  it. The Pi boots believing it is June until timesyncd corrects it, so this is
+  the difference between a truthful restart timestamp and a fictional one.
+
+### The journal does not survive a reboot
+
+Raspberry Pi OS ships `/usr/lib/systemd/journald.conf.d/40-rpi-volatile-storage.conf`
+with `Storage=volatile`. `/var/log/journal` exists and is empty; `journalctl -b -1`
+answers "no persistent journal was found"; `wtmp` is empty too.
+
+This is why the first occurrence of the ordering cycle could not be diagnosed —
+by the time it was noticed, the evidence had been erased by the reboot that
+produced it, and it was only understood because it happened again while someone
+was watching. It also shrinks G4's "log rotation observed" item to almost
+nothing, and raises a question that item did not previously ask. Recorded in
+`BACKLOG.md`; the default is defensible for an SD card and reversing it
+outright is not obviously right.
+
+### G2, which was the quiet half
+
+**The periodic-spike question is answered, and the answer is not the flush.**
+The open item recorded ~30ms spikes about once a minute on all three targets
+during a dev run, and wondered about the 60s flush. On the Pi, over 265 cycles:
+98 carry a spike, the gaps between them have a median of 10s with **none** in
+the 55–65s band, and the rate is flat across the minute — 17% to 59% per
+five-second bucket, no bucket dominant. Most are single-target (69 of 98),
+which rules out a local stall. So no per-minute periodicity exists on the
+hardware that matters, and the flush is exonerated there. The Crostini
+observation is not explained by this and is not worth chasing: it was a
+development machine, and the profile does not carry over.
+
+**What the profile does show is WiFi.** `eth0` has no carrier; the Pi is on
+wireless. Median latency around 17ms against a floor of 12.6ms, p90 near 50ms,
+p99 in the hundreds, and one target peaking at 737ms — plus two moments this
+evening where the Pi was simply unreachable from the development machine for a
+few seconds. Signal was strong when measured, so this reads as contention
+rather than range. It is the answer to "is this data sane?" and it moves two
+`BACKLOG.md` items up in value.
+
+**A concurrent speed test looks exactly as it should.** Baseline p50 15.2ms;
+during the test p50 17.2ms and p90 27→64ms. The interesting part is not the
+averages but the shape: one clear event lasting about ten seconds, all three
+targets rising together — three-way simultaneity that ordinary WiFi jitter does
+not produce — and back to baseline immediately after. **No failed pings at
+all.** That is the bump `BACKLOG.md`'s chart-marker item exists to explain, now
+with hardware behind the claim that it is expected rather than a fault.
+
+**Speed tests themselves produce plausible, repeatable figures**, three of them,
+with the ISP and server fields populated each time. Figures are deliberately not
+recorded here — see the open item in `plan.md`.
+
+**SD-card write volume, measured per-process rather than estimated.** The
+pinger's `write_bytes` moves in a step of exactly 81,920 bytes every 60
+seconds, of which 32,768 is cancelled before writeback: **48 KiB net per flush,
+about 69 MiB a day**, for 36 rows carrying perhaps 2 KiB of actual data. A
+25–40× amplification, and the shape of it is the open-write-close-per-flush
+pattern — a WAL created, checkpointed and deleted every time. Acceptable, and
+the buffering is earning its place: writing each ping as it happens would be
+roughly ten times that.
+
+The device-level total over the same period was 14.4 MiB/hour, but that figure
+includes the SSH sessions doing the measuring and is an upper bound rather than
+a measurement. The per-process number is the one to rely on. Attribution needed
+`/proc/<pid>/io`, which is root-only and deliberately outside `deploy.sh`'s
+sudoers grant — the cgroup `io` controller is not delegated to the service
+slices on this image, so there was no unprivileged route to it.
+
+### Not verified
+
+The box plot query has still never been timed on the Pi 3, and now cannot be:
+the rebuild and tonight's five reboots leave the database holding hours of
+pings rather than the day the query is meant to scan. It needs collection time
+before it can be attempted, and it stays on G4.
+
+The dashboard has still never been opened on a phone.
+
+The retention purge and log rotation have not been observed, and M6 and M7 are
+not built.
+
+Next: M6, the admin page. G4 is the only gate left and it belongs after M7.
