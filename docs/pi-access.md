@@ -118,13 +118,22 @@ Consider arming an automatic revert first, so a mistake repairs itself rather
 than needing a keyboard and monitor attached to a headless Pi:
 
 ```sh
-# Undoes the change in 5 minutes unless you disarm it.
-sudo systemd-run --on-active=300 --unit=ssh-failsafe \
+# Undoes the change in 15 minutes unless you disarm it.
+sudo systemd-run --on-active=900 --unit=ssh-failsafe \
   /bin/sh -c "rm -f /etc/ssh/sshd_config.d/10-bbmon-no-passwords.conf; systemctl restart ssh"
 
 # ...verify from a NEW terminal, then disarm:
 sudo systemctl stop ssh-failsafe.timer
 ```
+
+**Disarm as soon as the verification passes, and budget the window for how long
+verifying actually takes.** This was written as 300 seconds and fired on
+2026-08-19 while the checks were still being run from another machine — it
+removed the drop-in and put password authentication back, silently and
+correctly. A reverted failsafe looks identical to a change that never took:
+the drop-in is simply absent. If step 7 reports that password authentication is
+still offered, check whether the file is there at all before assuming the
+`sshd` restart failed.
 
 **7. Verify it took.** From a *new* terminal:
 
