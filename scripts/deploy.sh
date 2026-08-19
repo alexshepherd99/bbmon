@@ -135,7 +135,9 @@ main() {
     # shellcheck disable=SC2029  # BUILD_STAMP is a literal constant above,
     # expanded locally on purpose; nothing derived from input reaches here.
     build_stamp_text "$root" | ssh "$host" "sudo tee $BUILD_STAMP >/dev/null" \
-      || die "could not write $BUILD_STAMP on $host"
+      || die "could not write $BUILD_STAMP on $host.
+    If sudo asked for a password, $host has no /etc/sudoers.d/bbmon-deploy —
+    re-run scripts/bootstrap.sh there to install it."
   fi
 
   local changed
@@ -184,12 +186,26 @@ main() {
   log "Restarting ${restart[*]}"
   # Each collector flushes its buffer on SIGTERM, so a restart loses nothing.
   #
+  # One sudo invocation per service rather than one carrying all of them.
+  # bootstrap.sh grants exactly these restarts in /etc/sudoers.d/bbmon-deploy,
+  # and sudo matches a command line argument by argument: a rule for
+  # "systemctl restart bbmon-web" does not match "systemctl restart bbmon-web
+  # bbmon-pinger". The alternative is enumerating every combination of services
+  # in sudoers, which is worse. This is still one SSH connection.
+  #
   # The service names expand locally before the remote shell sees them, which
   # is intended. They are safe to expand because services_for_path only ever
   # returns literals from its own case statement — nothing derived from a
   # filename, an argument, or the config reaches this command line.
+  local remote_restart=""
+  for service in "${restart[@]}"; do
+    remote_restart+="sudo systemctl restart $service && "
+  done
   # shellcheck disable=SC2029
-  ssh "$host" "sudo systemctl restart ${restart[*]}"
+  ssh "$host" "${remote_restart}true" \
+    || die "could not restart ${restart[*]} on $host.
+    If sudo asked for a password, $host has no /etc/sudoers.d/bbmon-deploy —
+    re-run scripts/bootstrap.sh there to install it."
 
   for service in "${restart[@]}"; do
     # shellcheck disable=SC2029  # literal service name, as above

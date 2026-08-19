@@ -57,6 +57,17 @@ UNITS=(bbmon-init.service bbmon-pinger.service bbmon-speedtest.service
 # so enabling it would put the Pi in a boot loop.
 ON_DEMAND_UNITS=(bbmon-reboot.service)
 
+# The only units scripts/deploy.sh is allowed to restart without a password.
+# Deliberately not UNITS: bbmon-init is a oneshot that belongs to boot, and
+# bbmon-reboot.path is the reboot mechanism's watcher. Neither is ever the
+# answer to "code changed, restart what it affects", so neither belongs in a
+# standing grant — see install_deploy_sudoers.
+DEPLOY_RESTARTABLE_UNITS=(bbmon-pinger bbmon-speedtest bbmon-web)
+
+SUDOERS_FILE=/etc/sudoers.d/bbmon-deploy
+SYSTEMCTL_BIN=/usr/bin/systemctl
+TEE_BIN=/usr/bin/tee
+
 # Set when a temporary directory is in use; removed on exit however we leave,
 # including via die(). Empty rather than unset so `set -u` is satisfied before
 # anything assigns it.
@@ -276,6 +287,79 @@ EOF
   note "net.ipv4.ping_group_range = $(cat /proc/sys/net/ipv4/ping_group_range)"
 }
 
+# Renders the sudoers drop-in that lets scripts/deploy.sh do its two privileged
+# steps. Pure text, so tests/test_bootstrap_script.py can check the grant
+# without a Pi — the thing worth checking is what it does *not* allow.
+sudoers_content_for() {
+  local user="$1"
+  local unit
+  local -a commands=()
+
+  # Both spellings of each unit, because sudo matches the command line as it
+  # was typed rather than what it resolves to. deploy.sh says "bbmon-web";
+  # systemd answers equally to "bbmon-web.service", and a rule carrying only
+  # one of them fails to match the other with no indication of why.
+  for unit in "${DEPLOY_RESTARTABLE_UNITS[@]}"; do
+    commands+=("$SYSTEMCTL_BIN restart $unit" "$SYSTEMCTL_BIN restart $unit.service")
+  done
+  commands+=("$TEE_BIN $STATE_DIR/build-stamp")
+
+  cat <<EOF
+# Installed by bbmon's scripts/bootstrap.sh. Do not edit here — re-run
+# bootstrap.sh instead, which rewrites this file.
+#
+# scripts/deploy.sh is requirement 10's one-command development loop, and it
+# runs non-interactively over SSH. A sudo password prompt there has no terminal
+# to appear on, so the deploy fails rather than asks. Raspberry Pi OS images no
+# longer give the admin account passwordless sudo, which earlier images did.
+#
+# The grant is restart-these-services and write-this-one-file, and nothing
+# else. It is not a general NOPASSWD rule for $user.
+EOF
+
+  printf '%s ALL=(root) NOPASSWD: \\\n' "$user"
+  local i
+  for i in "${!commands[@]}"; do
+    if (( i < ${#commands[@]} - 1 )); then
+      printf '    %s, \\\n' "${commands[$i]}"
+    else
+      printf '    %s\n' "${commands[$i]}"
+    fi
+  done
+}
+
+install_deploy_sudoers() {
+  log "Granting scripts/deploy.sh its two privileged steps"
+  local owner
+  owner="$(admin_user)"
+
+  if [[ "$owner" == root ]]; then
+    note "bootstrap was run as root rather than via sudo, so there is no"
+    note "admin account to grant; skipping $SUDOERS_FILE"
+    return 0
+  fi
+
+  # Validated before it is installed, and installed by rename rather than in
+  # place. A malformed file in /etc/sudoers.d disables sudo for the whole
+  # machine, and on a headless Pi reached only over SSH that is unrecoverable
+  # without pulling the card.
+  TMPDIR_TO_CLEAN="${TMPDIR_TO_CLEAN:-$(mktemp -d)}"
+  local candidate="$TMPDIR_TO_CLEAN/bbmon-deploy"
+  sudoers_content_for "$owner" > "$candidate"
+
+  visudo -cqf "$candidate" \
+    || die "the generated sudoers file is not valid, so it was not installed.
+    Nothing was changed; sudo on this machine is unaffected."
+
+  install -o root -g root -m 0440 "$candidate" "$SUDOERS_FILE"
+  note "$SUDOERS_FILE grants $owner:"
+  local unit
+  for unit in "${DEPLOY_RESTARTABLE_UNITS[@]}"; do
+    note "  systemctl restart $unit"
+  done
+  note "  tee $STATE_DIR/build-stamp"
+}
+
 install_units() {
   log "Installing the systemd units"
   for unit in "${UNITS[@]}" "${ON_DEMAND_UNITS[@]}"; do
@@ -316,6 +400,7 @@ main() {
   install_config
   allow_unprivileged_ping
   install_units
+  install_deploy_sudoers
 
   if start_services; then
     local port
