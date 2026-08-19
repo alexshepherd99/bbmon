@@ -32,6 +32,12 @@ sudo apt install rsync
 Do this once per development machine. It ends with password authentication
 disabled on the Pi, so read the last step before starting.
 
+Every step below that prompts — for the Pi's password, for a key passphrase, or
+for sudo — needs a real interactive terminal. A session driven by an agent has
+no TTY to prompt on, and the failure is quiet: SSH reports
+`ssh_askpass: exec(/usr/bin/ssh-askpass): No such file or directory` and gives
+up. Run these by hand; the rest of the setup can be driven remotely afterwards.
+
 **1. Generate a key, if this machine has none.**
 
 ```sh
@@ -145,6 +151,34 @@ Ask the Pi what it actually resolved, which is the answer that counts:
 sudo sshd -T | grep -iE '^(passwordauthentication|kbdinteractiveauthentication)'
 ```
 
+## What the deploy scripts may do as root
+
+`deploy.sh` runs over a non-interactive SSH session, where a sudo password
+prompt has no terminal to appear on: it fails the deploy rather than asking for
+anything. `bootstrap.sh` therefore installs `/etc/sudoers.d/bbmon-deploy`,
+granting the admin account passwordless sudo for exactly two things — restarting
+`bbmon-pinger`, `bbmon-speedtest` and `bbmon-web`, and writing
+`/var/lib/bbmon/build-stamp`. Nothing else, and specifically not `bbmon-init` or
+either half of the reboot mechanism.
+
+This is not the same as the account having no other privilege: the admin user is
+in the `sudo` group like any Debian administrator, and can still do anything
+*with* a password. What the rule limits is what happens without one.
+
+To check it, drop any cached credential first:
+
+```sh
+sudo -k
+sudo -n systemctl restart bbmon-web      # should work
+sudo -n systemctl restart bbmon-init     # should be refused
+```
+
+**The `sudo -k` is the whole test.** `timestamp_type=global` is set on Raspberry
+Pi OS, so a sudo password typed in any session authorises every other session
+for a few minutes — including one an automated deploy is running in. Without
+`sudo -k` first, both commands above succeed and prove nothing at all, which is
+exactly what happened when this rule was first checked on 2026-08-19.
+
 ## When the address moves
 
 If the Pi takes its address by DHCP, resolving it by name is what makes that
@@ -172,3 +206,6 @@ configuration rather than repo configuration, so it is not scripted here.
 - **No login for the service account.** `bbmon` is created with
   `--shell /usr/sbin/nologin` and exists only to own the services and their
   data directory.
+- **No blanket passwordless sudo.** Earlier Raspberry Pi OS images gave the
+  admin account exactly that, and `deploy.sh` depended on it without saying so;
+  current images do not. The narrow replacement is the section above.
