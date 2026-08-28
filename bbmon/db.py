@@ -161,6 +161,35 @@ def insert_ping_results(
         raise DatabaseError(f"Could not write ping results: {error}")
 
 
+def purge_ping_results(conn: sqlite3.Connection, before: datetime) -> int:
+    """Delete pings recorded before ``before``, returning how many went.
+
+    Requirement 3's retention rule, and the only deletion in the application:
+    speed tests and restarts are kept indefinitely, so this touches one table
+    on purpose. The cutoff is exclusive, so a ping recorded exactly at the
+    boundary survives and the retention window really is the configured length.
+
+    Rows are deleted rather than the file rewritten, so the space is returned
+    to SQLite's free list rather than to the filesystem. That is deliberate on
+    an SD card: ``VACUUM`` rewrites the whole database to reclaim it, which is
+    a far larger write than the deletion it follows, and the freed pages are
+    reused by the pings that arrive next.
+
+    :param before: The retention boundary, normally ``now - retention.ping_days``.
+    :raises DatabaseError: if the deletion fails.
+    """
+    try:
+        cursor = conn.execute(
+            "DELETE FROM ping_results WHERE timestamp < ?", (before.isoformat(),)
+        )
+        conn.commit()
+    except sqlite3.Error as error:
+        logger.error("Could not purge ping results before %s: %s", before, error)
+        raise DatabaseError(f"Could not purge ping results: {error}")
+
+    return cursor.rowcount
+
+
 def insert_speedtest_results(
     conn: sqlite3.Connection, results: Sequence[SpeedtestResult]
 ) -> None:

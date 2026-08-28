@@ -25,6 +25,7 @@ from bbmon.collectors.ping import PingCollector
 from bbmon.config import ConfigError, load
 from bbmon.db import DatabaseError
 from bbmon.reboot import RebootError, RebootScheduler
+from bbmon.retention import RetentionPurge
 from bbmon.service import FLUSH_INTERVAL_SECONDS, run_until_stopped
 
 logger = logging.getLogger(__name__)
@@ -51,6 +52,21 @@ def main() -> int:
         logger.exception("The pinger could not start")
         return 1
 
+    purge = RetentionPurge(
+        database_path=config.database_path,
+        ping_days=config.retention_ping_days,
+    )
+
+    def between_cycles() -> None:
+        """The two jobs that ride on this loop rather than owning a timer.
+
+        The order between them carries no meaning and is not tested: asking
+        for a reboot writes a trigger file and returns, so the machine goes
+        down some seconds later, in the middle of whatever is running.
+        """
+        purge.check()
+        scheduler.check()
+
     collector = PingCollector(
         targets=config.ping_targets,
         interval_seconds=config.ping_interval_seconds,
@@ -67,12 +83,13 @@ def main() -> int:
         config.reboot_interval_days,
         type(reboot_action).__name__,
     )
+    logger.info("Keeping %d days of ping results", config.retention_ping_days)
 
     return run_until_stopped(
         collector,
         config.database_path,
         flush_interval_seconds=FLUSH_INTERVAL_SECONDS,
-        between_cycles=scheduler.check,
+        between_cycles=between_cycles,
     )
 
 

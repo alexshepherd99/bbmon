@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from bbmon import db
-from bbmon.models import PingResult
+from bbmon.models import PingResult, Restart, SpeedtestResult
 
 
 @pytest.fixture
@@ -25,6 +25,10 @@ def table_names(path: Path) -> set[str]:
 
 def at(minutes_ago: int) -> datetime:
     return datetime.now(timezone.utc) - timedelta(minutes=minutes_ago)
+
+
+def days_ago(days: float) -> datetime:
+    return datetime.now(timezone.utc) - timedelta(days=days)
 
 
 def test_initialise_creates_all_three_tables(database: Path) -> None:
@@ -154,3 +158,78 @@ def test_sql_metacharacters_in_a_target_are_stored_literally(database: Path) -> 
 
     assert result.target == hostile
     assert "ping_results" in table_names(database)
+
+
+def test_purge_deletes_pings_older_than_the_cutoff(database: Path) -> None:
+    with db.connect(database) as conn:
+        db.insert_ping_results(
+            conn,
+            [
+                PingResult(days_ago(40), "8.8.8.8", 10.0, True),
+                PingResult(days_ago(31), "8.8.8.8", 11.0, True),
+                PingResult(days_ago(1), "8.8.8.8", 12.0, True),
+            ],
+        )
+
+        db.purge_ping_results(conn, before=days_ago(30))
+
+        remaining = db.recent_ping_results(conn, since=days_ago(365))
+
+    assert [result.latency_ms for result in remaining] == [12.0]
+
+
+def test_purge_keeps_a_ping_recorded_exactly_at_the_cutoff(database: Path) -> None:
+    """The boundary is inclusive, so a full retention window is really kept."""
+    cutoff = days_ago(30)
+
+    with db.connect(database) as conn:
+        db.insert_ping_results(conn, [PingResult(cutoff, "8.8.8.8", 10.0, True)])
+
+        db.purge_ping_results(conn, before=cutoff)
+
+        assert len(db.recent_ping_results(conn, since=days_ago(365))) == 1
+
+
+def test_purge_reports_how_many_rows_it_deleted(database: Path) -> None:
+    """The count is what the log line reports, and the only sign it ran."""
+    with db.connect(database) as conn:
+        db.insert_ping_results(
+            conn,
+            [PingResult(days_ago(40), "8.8.8.8", float(n), True) for n in range(7)],
+        )
+
+        assert db.purge_ping_results(conn, before=days_ago(30)) == 7
+
+
+def test_purge_leaves_speed_tests_and_restarts_alone(database: Path) -> None:
+    """Requirement 3 retains speed tests indefinitely; only pings are purged."""
+    with db.connect(database) as conn:
+        db.insert_ping_results(conn, [PingResult(days_ago(40), "8.8.8.8", 1.0, True)])
+        db.insert_speedtest_results(
+            conn,
+            [SpeedtestResult(days_ago(40), 50.0, 10.0, 12.0, None, None, True)],
+        )
+        db.insert_restart(conn, Restart(days_ago(40), True, "an old reboot"))
+
+        db.purge_ping_results(conn, before=days_ago(30))
+
+        assert db.recent_ping_results(conn, since=days_ago(365)) == []
+        assert len(db.speedtest_history(conn, since=days_ago(365))) == 1
+        assert len(db.recent_restarts(conn, limit=10)) == 1
+
+
+def test_purge_of_nothing_is_harmless(database: Path) -> None:
+    """The normal case for most of a retention window's length."""
+    with db.connect(database) as conn:
+        db.insert_ping_results(conn, [PingResult(days_ago(1), "8.8.8.8", 1.0, True)])
+
+        assert db.purge_ping_results(conn, before=days_ago(30)) == 0
+        assert len(db.recent_ping_results(conn, since=days_ago(365))) == 1
+
+
+def test_purge_raises_when_the_table_is_gone(database: Path) -> None:
+    with db.connect(database) as conn:
+        conn.execute("DROP TABLE ping_results")
+
+        with pytest.raises(db.DatabaseError, match="purge"):
+            db.purge_ping_results(conn, before=days_ago(30))

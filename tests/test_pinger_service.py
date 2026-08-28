@@ -1,12 +1,18 @@
 """Tests for the ping service entrypoint."""
 
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
 import pytest
 
-from bbmon import pinger, reboot
+from bbmon import db, pinger, reboot
+from bbmon.models import PingResult
 from bbmon.service import FLUSH_INTERVAL_SECONDS
+
+
+def days_ago(days: float) -> datetime:
+    return datetime.now(timezone.utc) - timedelta(days=days)
 
 CONFIG = """
 ping:
@@ -15,6 +21,8 @@ ping:
     - 9.9.9.9
 reboot:
   interval_days: 1
+retention:
+  ping_days: 2
 database:
   path: {path}
 """
@@ -85,6 +93,33 @@ def test_the_reboot_check_leaves_a_machine_alone_before_its_interval(
     captured["between_cycles"]()
 
     assert not reboot.request_file_path(tmp_path / "bbmon.db").exists()
+
+
+def test_the_retention_purge_shares_the_ping_loop(
+    config_file: Path, captured: dict[str, Any], tmp_path: Path
+) -> None:
+    """Requirement 3's daily purge, on the same loop and for the same reason.
+
+    The config keeps two days; a five-day-old ping should not survive one turn
+    of the loop.
+    """
+    database = tmp_path / "bbmon.db"
+
+    assert pinger.main() == 0
+    with db.connect(database) as conn:
+        db.insert_ping_results(
+            conn,
+            [
+                PingResult(days_ago(5), "9.9.9.9", 1.0, True),
+                PingResult(days_ago(1), "9.9.9.9", 2.0, True),
+            ],
+        )
+
+    captured["between_cycles"]()
+
+    with db.connect(database) as conn:
+        remaining = db.recent_ping_results(conn, since=days_ago(3650))
+    assert [result.latency_ms for result in remaining] == [2.0]
 
 
 def test_a_misconfigured_reboot_action_stops_the_service_starting(
