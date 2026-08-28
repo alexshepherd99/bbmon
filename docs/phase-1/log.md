@@ -623,3 +623,110 @@ The retention purge and log rotation have not been observed, and M6 and M7 are
 not built.
 
 Next: M6, the admin page. G4 is the only gate left and it belongs after M7.
+
+## 2026-08-28 — Nine days unattended, and the box plot query finally timed
+
+The Pi was left running after G3 on 2026-08-19 and not touched again until
+tonight. That accident turned out to be the most useful thing in this entry:
+everything below is behaviour nobody was steering.
+
+### The soak nobody supervised
+
+455,853 ping rows across ten calendar days — about 50,700 a day against a
+theoretical 51,840 for three targets on a five-second interval, so 97.8% of
+cycles recorded. 385 pings failed, 0.084%. 81 speed tests ran with one
+failure, and the failure is a row rather than an absence, which is requirement
+5 doing what it says. `PRAGMA integrity_check` on the live database returns
+`ok`. Speed test figures are deliberately not recorded here, per the standing
+rule from 2026-08-13.
+
+The database is 48.8 MB and grows about 5.4 MB a day with nothing purging it.
+M6's retention job is the answer and it does not exist yet; at this rate the
+29 GB card is not a near-term concern, but unbounded growth is still growth.
+
+**Two scheduled reboots happened with nobody watching, and both worked.**
+2026-08-22 and 2026-08-25, three days apart, each recorded `expected = true`
+carrying the scheduled reason, and the machine came back and resumed
+collecting each time. G3 proved the mechanism with someone at the keyboard;
+this is the same mechanism proving itself unsupervised, which is the claim
+that actually matters for a box that is meant to be left alone. The journal is
+still volatile, so there is no log of either reboot — the `restarts` rows are
+the entire record, which is precisely the gap `BACKLOG.md` describes.
+
+### The box plot query: 2.0 s on the Pi 3
+
+G4's one explicitly blocked item. It needed a day of pings in the database;
+there are now nine.
+
+| Measurement | Result |
+|---|---|
+| `/api/ping/hourly` over HTTP on localhost, cache cleared by restarting `bbmon-web` | 2.079 s |
+| The same endpoint again, cache hit | 8 ms |
+| `db.hourly_ping_summary` direct, 10 runs across two sessions | 2013–2038 ms |
+| Rows in the 24-hour window | 50,115, giving 72 buckets |
+| SoC state throughout | `throttled=0x0`, 1200 MHz, 56.4 °C |
+
+A 25 ms spread across ten runs says this is CPU-bound rather than waiting on
+the SD card. Against the ~400 ms measured on the x86 development container,
+the Pi 3 is 5× slower — the pessimistic end of "slower by an unmeasured
+factor", but not alarming.
+
+**One reading is not reconciled.** The first HTTP measurement of the evening,
+taken before the harness existed, was 1.28 s. Every measurement afterwards
+agrees at ~2.0 s, including a cold HTTP request taken back to back with the
+direct runs. The outlier is recorded rather than averaged away, because there
+is no account of it.
+
+`EXPLAIN QUERY PLAN` shows the index doing its job —
+`SEARCH ping_results USING INDEX ix_ping_results_timestamp (timestamp>?)` —
+and then three temp B-trees: the `ORDER BY latency_ms` inside the window
+function's partitions, the `GROUP BY`, and the final `ORDER BY`. Those sorts
+are inherent to nearest-rank quartiles, so the query is not doing anything
+wrong and there is no missing index to add.
+
+**The cost tracks the window, not the size of the table.** Same 456k-row
+table, varying only the window:
+
+```
+ 1h window:   1755 rows ->    85 ms
+ 3h window:   5969 rows ->   223 ms
+ 6h window:  12301 rows ->   460 ms
+12h window:  24909 rows ->   987 ms
+24h window:  50115 rows ->  2009 ms
+```
+
+Linear at about 40 µs a row, and flat in table size, because the index bounds
+the scan to the window. Two things follow. **M6's retention purge will not
+make this faster** — it keeps the file small, which is its own justification,
+but the query would cost 2 s on a one-day-old database too. And the levers
+`plan.md` already named are the right ones: window, cache TTL, client-side
+downsampling. Not the query.
+
+Judged acceptable for phase 1 with no change. At the 300 s TTL one viewer in
+five minutes waits two seconds for the box plot panel while the rest of the
+page is already drawn, and everyone else gets 8 ms. The residue worth noting
+is that the cache fills lazily, so that penalty recurs for whoever arrives
+first after each expiry; refreshing the entry in the background instead of on
+the miss would remove it, and that is a backlog thought, not phase 1.
+
+### The mobile layout is fine
+
+Confirmed on a real phone. That closes the item deferred from G1 on
+2026-08-12 and carried through every gate since — the one thing the jsdom
+harness and the Chromebook browser between them could never answer.
+
+### Found on the way: memory is not being accounted
+
+`systemctl show -p MemoryCurrent` returns `[not set]` for all three services,
+because no unit sets `MemoryAccounting=yes`. CPU is available and cheap —
+`CPUUsageNSec` puts the pinger at about 0.7% of one core averaged over the
+three days since the last reboot — so G4's "CPU and memory measured under
+normal load" is currently half-answerable. Either the units gain the
+directive or the figure comes from RSS instead. Not decided tonight; recorded
+against G4 in `plan.md`.
+
+Nothing was left on the Pi: the timing script and the database copy it read
+were removed. The only state changed was one restart of `bbmon-web` to clear
+its cache, which adds no `restarts` row.
+
+Next: M6, still.
