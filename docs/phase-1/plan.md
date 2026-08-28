@@ -53,7 +53,7 @@ Development happens on the Chromebook (Crostini); the Pi is a deployment and ver
 - The NTP wait behaves on a Pi with no RTC: `/run/systemd/timesync/synchronized` appears and the wait ends, rather than timing out at 120s. Measured at 37s, 39s and 55s across three boots.
 - Confirm the pinger keeps `NoNewPrivileges=yes` and still reboots — the whole point of the path unit.
 
-**G4 — soak** *(after M7)*. Log rotation observed; retention purge observed over several days; full security checklist. `update.sh` from a clean git pull was **done 2026-08-19** — its first ever run, which delivered the G3 ordering-cycle fix. **The mobile layout was confirmed on a real phone on 2026-08-28**, closing the item deferred from G1.
+**G4 — soak** *(after M7)*. Log rotation observed; full security checklist. The retention purge is **deployed as of 2026-08-28** and runs daily, but with retention left at 30 days and the oldest ping dated 2026-08-19, the first run that deletes anything falls due around **2026-09-18** — it stays silent until then, so an absence of log lines before that date is the purge working, not the purge missing. `update.sh` from a clean git pull was **done 2026-08-19** — its first ever run, which delivered the G3 ordering-cycle fix. **The mobile layout was confirmed on a real phone on 2026-08-28**, closing the item deferred from G1.
 
 CPU under normal load is **measured**: about 0.7% of one core for the pinger, averaged over three days. Memory is **not**, and cannot be as the units stand — no unit sets `MemoryAccounting=yes`, so `MemoryCurrent` reads `[not set]`. Either the units gain the directive or the figure comes from RSS; decide when this gate is worked.
 

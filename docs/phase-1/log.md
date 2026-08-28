@@ -730,3 +730,84 @@ were removed. The only state changed was one restart of `bbmon-web` to clear
 its cache, which adds no `restarts` row.
 
 Next: M6, still.
+
+## 2026-08-28 — M6 begun: the retention purge, deployed and through a reboot
+
+M6 is being worked in five commits, ordered so the pieces that need no
+decision come first: the retention purge, the CSV export, then the admin page
+with the config form and its write-back — which is where the Host-header
+allowlist and the CSRF tokens land, because it is the first POST route — then
+the force-reboot button, then SIGHUP reload. The first of those is done.
+
+The purge was taken first for a reason that has nothing to do with difficulty:
+it is the one M6 item whose *verification* costs elapsed time rather than
+effort, and G4 wants it observed over several days. Everything else can be
+built away from the Pi at any pace.
+
+**The design decisions are in the commit message; two are worth repeating.**
+Due-ness is measured on a monotonic clock while the cutoff is wall-clock —
+every RTC-less boot steps the clock by months, and that must not skip a purge
+or fire a burst of them, but the stored timestamps are wall-clock so the
+cutoff has to be. And a failed purge does not count as a purge: it retries on
+the next cycle rather than waiting another day, because retention that quietly
+stopped is how an SD card fills.
+
+### Two test defects, both found by mutation rather than by review
+
+Neither the new database function nor the new class could be watched failing
+first — a brand-new symbol's only red is an import error, which demonstrates
+nothing — so both were confirmed by breaking the finished code. That found
+two problems in the tests, which is the point of doing it.
+
+**A test that could not fail.** The retry-after-failure test advanced the
+clock by a full day before retrying, so the latch it existed to catch — a
+failed purge stamping its due-time anyway — did not matter: a day later it
+was due regardless. Stamping the due-time before the write could fail left
+the suite green. Rewritten to retry after five seconds, which is what the real
+loop does, it fails correctly.
+
+**A test that asserted nothing.** An ordering test claimed the purge still
+runs when a reboot is due. It passed with the order reversed, because asking
+for a reboot writes a trigger file and returns — the machine goes down
+asynchronously, seconds later, in the middle of whatever is running. The
+ordering has no meaning to test. The test was deleted and the comment that
+claimed otherwise corrected, rather than left standing as a justification the
+code does not support.
+
+### Deployed, with retention left at 30 days
+
+`deploy.sh` at 22:16, build stamp `from 75ede36`. Retention deliberately left
+at the configured 30 days rather than lowered to make a deletion happen
+sooner, so **the first purge that actually deletes anything falls due around
+2026-09-18** — the oldest ping in the database is from 2026-08-19. Until then
+the purge runs daily and deletes nothing, which is the normal case for most of
+a window's length and is why it stays silent unless it removed rows.
+
+**The deploy warned that unit files had changed, and they had not.** Four
+byte-identical files were listed as changed and the "run `bootstrap.sh`"
+warning printed on the strength of it; `md5sum` on both machines settled it.
+`update.sh` pulls with git, git checkout rewrites mtimes, `rsync -a`'s quick
+check is size-plus-mtime, and the change filter only excludes lines rsync did
+not transfer at all. Recorded in `BACKLOG.md` rather than fixed here — but
+noted as more than cosmetic, because it is precisely the warning G3 taught us
+to trust.
+
+### Through the 22:30 reboot, on the new code
+
+The scheduled reboot fell due fifteen minutes after the deploy, which is the
+check worth having before a long unattended stretch: the reboot scheduler
+lives inside the pinger, so a pinger that failed to start would have taken
+future reboots down with it and reported nothing.
+
+It came back at 22:30:17 with all five units active, the build stamp still
+naming `75ede36`, and the pinger's new startup line — "Keeping 30 days of
+ping results" — in the journal for this boot. The restart row reads
+`expected = true` with the scheduled reason, the third consecutive scheduled
+reboot recorded correctly. The NTP wait took about 43 seconds, in line with
+the 37s, 39s and 55s measured at G3. 126 ping points landed in the five
+minutes spanning the reboot against roughly 180 for an undisturbed window, so
+the gap is the reboot itself and not a service that came back idle.
+
+Next: M6's CSV export, which needs no Pi at all. The admin page after it does
+— it adds a unit pair, and new units can only be installed by running
+`bootstrap.sh` on the machine.
