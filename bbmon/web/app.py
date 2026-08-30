@@ -10,8 +10,10 @@ is hard off and the bind address is explicit rather than implicit.
 
 from __future__ import annotations
 
+import ipaddress
 import logging
 from collections import defaultdict
+from collections.abc import Iterable
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -69,6 +71,11 @@ BUILD_STAMP_NAME = "build-stamp"
 #: or a Pi bootstrapped before the scripts wrote one.
 UNKNOWN_BUILD = "build unknown"
 
+#: Names answered to whatever ``web.allowed_hosts`` says. ``localhost`` cannot
+#: be rebound — it is the browser's own name for the machine the browser is on
+#: — so nothing is given away by allowing it, and a Pi-local curl works.
+ALWAYS_ALLOWED_HOSTS = frozenset({"localhost"})
+
 #: The stamp is one short line. Anything longer is a corrupt or wrong file, and
 #: a footer is not the place to discover that by wrapping across the page.
 MAX_STAMP_LENGTH = 120
@@ -87,6 +94,24 @@ def create_app(config: Config, cache: TimedCache | None = None) -> Flask:
     # whole LAN with no authentication in front of it.
     app.config["DEBUG"] = False
     app.debug = False
+
+    @app.before_request
+    def reject_unexpected_hosts() -> None:
+        """Refuse a request that asked for a name this dashboard does not own.
+
+        Registered on the app rather than per route, so it covers the static
+        files and every route added later — including the admin page's POSTs,
+        where a rebound origin would be able to reboot the Pi.
+        """
+        if not host_is_allowed(request.host, config.web_allowed_hosts):
+            logger.warning(
+                "Refused a request for host %r; add it to web.allowed_hosts if "
+                "it is a name this dashboard should answer to",
+                request.host,
+            )
+            # The host is not echoed back: whoever sent it already knows it,
+            # and it is the one part of the request under their control.
+            raise BadRequest("This dashboard does not answer to that host name.")
 
     @app.get("/")
     def dashboard() -> str:
@@ -277,6 +302,63 @@ def create_app(config: Config, cache: TimedCache | None = None) -> Flask:
         )
 
     return app
+
+
+def host_is_allowed(host: str, allowed: Iterable[str]) -> bool:
+    """Whether a request's ``Host`` names something this dashboard answers to.
+
+    This is the defence against DNS rebinding, which is the one attack that
+    survives having no authentication and no session to steal. A page on any
+    website can point a name it owns at the Pi's address; once the browser has
+    cached that name as resolving there, the page is same-origin with the
+    dashboard and can read it and post to it. Refusing the name breaks that,
+    because the browser sends the name it was told to fetch.
+
+    **Any address is answered**, and that is deliberate rather than lax: an
+    address is not something DNS can move, so a page served from elsewhere
+    cannot become same-origin with one. It is also how the dashboard is
+    reached in practice, from a phone on the LAN, and the address of a home Pi
+    is not knowable here.
+
+    :param allowed: Extra names from ``web.allowed_hosts``, matched whole and
+        without regard to case. A suffix match is not offered: it would let
+        ``bbmon.lan.example.com``, a name anyone can register, through a rule
+        meant to name one host.
+    """
+    name = _host_without_port(host)
+    if not name:
+        return False
+    if name in ALWAYS_ALLOWED_HOSTS or _is_address(name):
+        return True
+    return name in {_normalise_host(entry) for entry in allowed}
+
+
+def _host_without_port(host: str) -> str:
+    """Return the name or address part of a ``Host`` header, normalised.
+
+    An empty string is returned for anything unparseable, which the caller
+    refuses — including a bare IPv6 address, which a ``Host`` header is
+    required to bracket.
+    """
+    host = host.strip().lower()
+    if host.startswith("["):
+        closed = host.find("]")
+        return host[1:closed] if closed != -1 else ""
+    return _normalise_host(host.split(":", 1)[0])
+
+
+def _normalise_host(host: str) -> str:
+    """Lower-case a host name and drop the root label a fully-qualified one
+    may carry, so ``bbmon.lan.`` and ``bbmon.lan`` are the same name."""
+    return host.strip().lower().rstrip(".")
+
+
+def _is_address(name: str) -> bool:
+    try:
+        ipaddress.ip_address(name)
+    except ValueError:
+        return False
+    return True
 
 
 def _requested_window_minutes() -> int:

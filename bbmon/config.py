@@ -35,6 +35,7 @@ _FIELD_MAP: dict[tuple[str, str], str] = {
     ("retention", "ping_days"): "retention_ping_days",
     ("web", "host"): "web_host",
     ("web", "port"): "web_port",
+    ("web", "allowed_hosts"): "web_allowed_hosts",
     ("web", "restart_limit"): "web_restart_limit",
     ("database", "path"): "database_path",
 }
@@ -59,6 +60,11 @@ class Config:
     retention_ping_days: int = 30
     web_host: str = "127.0.0.1"
     web_port: int = 8080
+    #: Extra names the dashboard answers to, beyond addresses and ``localhost``
+    #: — an mDNS or router-assigned name, if the Pi is reached by one. Empty by
+    #: default because the name depends on the network and no default could be
+    #: right; see :func:`bbmon.web.app.host_is_allowed` for what it protects.
+    web_allowed_hosts: tuple[str, ...] = ()
     #: How many restarts the dashboard lists. Requirement 7 asks for the last
     #: 20, configurable.
     web_restart_limit: int = 20
@@ -72,6 +78,7 @@ class Config:
         _require_ping_targets(self.ping_targets)
         _require_bind_address(self.web_host)
         _require_port(self.web_port)
+        _require_allowed_hosts(self.web_allowed_hosts)
         _require_positive_int(self.web_restart_limit, "web.restart_limit")
         _require_database_path(self.database_path)
 
@@ -148,6 +155,10 @@ def _coerce(field_name: str, value: Any) -> Any:
         if not isinstance(value, list):
             raise ConfigError("ping.targets must be a list")
         return tuple(value)
+    if field_name == "web_allowed_hosts":
+        if not isinstance(value, list):
+            raise ConfigError("web.allowed_hosts must be a list")
+        return tuple(value)
     if field_name == "database_path":
         if not isinstance(value, str):
             raise ConfigError("database.path must be a string")
@@ -171,6 +182,22 @@ def _require_ping_targets(targets: tuple[str, ...]) -> None:
         if not isinstance(target, str) or not _is_hostname_or_ip(target):
             raise ConfigError(
                 f"ping.targets entry {target!r} is not a valid hostname or IP address"
+            )
+
+
+def _require_allowed_hosts(hosts: Any) -> None:
+    """Check the extra names the dashboard may answer to.
+
+    An empty list is the default and is valid: addresses and ``localhost`` are
+    always answered, and most installations are reached by address alone.
+    """
+    if isinstance(hosts, str) or not isinstance(hosts, (tuple, list)):
+        raise ConfigError(f"web.allowed_hosts must be a list, got {hosts!r}")
+    for host in hosts:
+        if not isinstance(host, str) or not _is_hostname_or_ip(host):
+            raise ConfigError(
+                f"web.allowed_hosts entry {host!r} is not a valid hostname "
+                "or IP address"
             )
 
 

@@ -32,6 +32,14 @@ web:
   port: 8080
   # How many restarts the dashboard's restart list shows.
   restart_limit: 20
+  # Extra host names the dashboard answers to. Any IP address and `localhost`
+  # are always answered; anything else is refused, so that a name pointed at
+  # this Pi by someone else's DNS cannot become same-origin with the
+  # dashboard. Add a name here only if the Pi is reached by one — an mDNS
+  # `.local` name or one the router hands out — and reaching it by address
+  # needs nothing.
+  # allowed_hosts:
+  #   - bbmon.lan
 
 database:
   path: /var/lib/bbmon/bbmon.db
