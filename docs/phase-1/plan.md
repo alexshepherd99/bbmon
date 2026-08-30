@@ -55,7 +55,7 @@ Development happens on the Chromebook (Crostini); the Pi is a deployment and ver
 
 **G4 — soak** *(after M7)*. Log rotation observed; full security checklist. The retention purge is **deployed as of 2026-08-28** and runs daily, but with retention left at 30 days and the oldest ping dated 2026-08-19, the first run that deletes anything falls due around **2026-09-18** — it stays silent until then, so an absence of log lines before that date is the purge working, not the purge missing. `update.sh` from a clean git pull was **done 2026-08-19** — its first ever run, which delivered the G3 ordering-cycle fix. **The mobile layout was confirmed on a real phone on 2026-08-28**, closing the item deferred from G1.
 
-CPU under normal load is **measured**: about 0.7% of one core for the pinger, averaged over three days. Memory is **not**, and cannot be as the units stand — no unit sets `MemoryAccounting=yes`, so `MemoryCurrent` reads `[not set]`. Either the units gain the directive or the figure comes from RSS; decide when this gate is worked.
+CPU under normal load is **measured**: about 0.7% of one core for the pinger, averaged over three days. **Memory is read from `/proc/<pid>/status`, not from systemd** — decided 2026-08-30, when it was needed for the CSV export and worked on a live service with no unit edit and no restart. `MemoryAccounting=yes` is therefore not being added; `MemoryCurrent` stays `[not set]`. `bbmon-web` idles at about 38 MB and does not grow while streaming an export. The pinger and speed test service still need the same reading.
 
 M5 added two items that cannot be settled off the Pi, both now closed:
 

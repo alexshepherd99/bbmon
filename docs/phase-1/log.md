@@ -929,3 +929,59 @@ installs the admin page's units.
 Next: M6's admin page — the config form, its atomic write-back through a
 privileged helper, the Host-header allowlist and CSRF tokens in that same
 commit, and the export's date pickers.
+
+## 2026-08-30 — the export on the Pi, and the memory figure it produced
+
+Deployed the same evening at 20:13, build stamp `from 178cd73`, no unit files
+changed so no `bootstrap.sh` needed. The three services restarted and came
+back active. `deploy.sh` listed seven changed files and every one of them had
+genuinely changed — the last deploy predates two documentation commits — so
+the false-change defect in `BACKLOG.md` did not fire here. It is still there;
+this deploy simply was not the shape that triggers it.
+
+### What a real export costs
+
+| Range | Rows | Size | Time |
+|---|---|---|---|
+| One day | 50,763 | 2.6 MB | 1.5 s |
+| Everything retained (11 days) | 554,241 | 29 MB | 14.9 s |
+
+Roughly 37,000 rows a second, flat, over WiFi. A full 30-day retention window
+therefore extrapolates to about 1.5 million rows, 79 MB and 40 seconds — which
+is the figure the design was written against, and it is a slow download rather
+than a failure.
+
+The speed test export returned 99 rows with all seven columns. A backwards
+range returned 400, and `Transfer-Encoding: chunked` came back from the Pi as
+it did on Crostini.
+
+### The design's central claim, measured
+
+The whole shape of this commit — the paged cursor, the 64 KiB flush, the
+generator-owned connection — rests on one assertion: the web service does not
+hold the file. That is now measured rather than argued.
+
+`VmRSS` for `bbmon-web` was 38,820 kB before the export and sat at **39,356 kB,
+unchanged to the kilobyte, through every second of the 29 MB run**. Half a
+megabyte of variation across a file sixty times that size.
+
+The negative case is worth stating because it is what makes the number mean
+something: had the response been built before sending, RSS would have had to
+rise by roughly the size of the file, and 29 MB on top of a 39 MB process is
+not a subtle difference. Sampling once a second for the duration would not have
+missed it.
+
+### An answer G4 was waiting for
+
+`plan.md` recorded that memory "is not measured, and cannot be as the units
+stand" — no unit sets `MemoryAccounting=yes`, so `MemoryCurrent` reads
+`[not set]` — and left open whether to add the directive or take the figure
+from RSS. Reading `/proc/<pid>/status` worked unchanged, on a live service,
+under the heaviest load this application has, and needed no unit edit and no
+restart. That settles the question in favour of RSS unless something later
+needs cgroup-level accounting.
+
+The figure that falls out of it: `bbmon-web` idles at about 38 MB.
+
+Still outstanding for G4 is the same measurement for the pinger and the speed
+test service, which this did not touch.
