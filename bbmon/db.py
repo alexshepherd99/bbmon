@@ -393,6 +393,79 @@ def recent_ping_results(
     ]
 
 
+#: How many rows SQLite hands over at a time while an export streams. Large
+#: enough that the per-fetch overhead disappears against the query, small
+#: enough that the Pi never holds more than a moment of the file.
+EXPORT_FETCH_ROWS = 1000
+
+
+def stream_ping_results(
+    conn: sqlite3.Connection, start: datetime, end: datetime
+) -> Iterator[tuple]:
+    """Yield stored ping rows from ``start`` up to but not including ``end``.
+
+    Raw rows rather than :class:`~bbmon.models.PingResult` objects, and a
+    generator rather than a list, unlike every other read here. This backs
+    requirement 8's CSV export, where a full retention window is over a
+    million rows: building a model object for each of them, or holding them
+    all at once, is precisely what that route cannot do on a Pi 3.
+
+    Timestamps come back as the stored text. It is already ISO 8601 in UTC, so
+    the export writes it verbatim rather than parsing and reformatting a
+    million values on the way past.
+
+    :raises DatabaseError: if the read fails. Note that the failure surfaces
+        while the caller is iterating, not when this is called.
+    """
+    yield from _stream_rows(
+        conn,
+        "SELECT timestamp, target, latency_ms, success FROM ping_results "
+        "WHERE timestamp >= ? AND timestamp < ? ORDER BY timestamp",
+        (start.isoformat(), end.isoformat()),
+        "ping results",
+    )
+
+
+def stream_speedtest_results(
+    conn: sqlite3.Connection, start: datetime, end: datetime
+) -> Iterator[tuple]:
+    """Yield stored speed test rows from ``start`` up to but excluding ``end``.
+
+    The same shape as :func:`stream_ping_results` rather than the smaller
+    thing this table's volume would justify, so the export handles one kind of
+    row source and not two.
+
+    :raises DatabaseError: if the read fails, while the caller is iterating.
+    """
+    yield from _stream_rows(
+        conn,
+        "SELECT timestamp, download_mbps, upload_mbps, ping_ms, isp, server, "
+        "success FROM speedtest_results "
+        "WHERE timestamp >= ? AND timestamp < ? ORDER BY timestamp",
+        (start.isoformat(), end.isoformat()),
+        "speed test results",
+    )
+
+
+def _stream_rows(
+    conn: sqlite3.Connection,
+    sql: str,
+    parameters: tuple,
+    description: str,
+) -> Iterator[tuple]:
+    """Yield a query's rows in pages, holding one page at a time."""
+    try:
+        cursor = conn.execute(sql, parameters)
+        while True:
+            rows = cursor.fetchmany(EXPORT_FETCH_ROWS)
+            if not rows:
+                return
+            yield from rows
+    except sqlite3.Error as error:
+        logger.error("Could not export %s: %s", description, error)
+        raise DatabaseError(f"Could not export {description}: {error}")
+
+
 #: Buckets a stored timestamp into its clock hour. Every timestamp is written
 #: by ``datetime.isoformat()`` in UTC, so the first 13 characters are always
 #: ``YYYY-MM-DDTHH`` and string truncation is a correct hour key.

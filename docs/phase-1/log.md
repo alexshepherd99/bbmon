@@ -811,3 +811,121 @@ the gap is the reboot itself and not a service that came back idle.
 Next: M6's CSV export, which needs no Pi at all. The admin page after it does
 — it adds a unit pair, and new units can only be installed by running
 `bootstrap.sh` on the machine.
+
+## 2026-08-30 — M6's CSV export: two routes that stream
+
+The second of M6's five commits. `GET /export/ping.csv` and
+`GET /export/speedtest.csv`, both taking `start` and `end` as `YYYY-MM-DD`.
+Read-only and GET-only, so this commit does not touch the Host-header
+allowlist or CSRF — those still land with the config form, which is the first
+POST route.
+
+**No page links to these yet.** The date pickers belong on the admin page by
+requirement 8, and the admin page is the next commit; putting a download
+control on the dashboard instead would have to be undone. The routes work
+today by typing a URL, which is enough to verify them.
+
+### The one decision that shaped everything: it streams
+
+A full retention window is thirty days of pings at three targets on a
+five-second interval — roughly 1.5 million rows, well over 100 MB of CSV.
+Building that in memory before sending it is how the web service dies on a Pi
+3, so nothing in the path holds more than one chunk: `db.stream_*` fetches
+1,000 rows at a time from the cursor, and the CSV writer flushes at 64 KiB.
+
+Three consequences worth recording, because each one is a place the obvious
+implementation would have been wrong.
+
+**Stored timestamps are written out verbatim.** They are already ISO 8601 in
+UTC, and parsing then reformatting a million of them would cost more than the
+query that produced them. That is why these two reads return raw rows rather
+than the model objects every other read in `db.py` returns.
+
+**The connection is opened inside the generator**, not around it. The response
+body is consumed after the view has returned, so a connection opened in the
+view would already be closed by the time the first row was wanted. Opening it
+inside means it also closes when a browser abandons the download — and it is
+why the chunks are re-joined with a small generator instead of
+`itertools.chain`, which has no `close()` to propagate.
+
+**The query is run before the first byte goes out.** A streamed response that
+fails half way through cannot become an HTTP error: the browser has already
+started saving, and what it saves is a short file that looks complete. So
+`csv_body` pulls the first chunk eagerly, which forces the connection open and
+the statement to execute while a failure can still be a 500. Failures after
+that point still truncate silently — that is inherent to streaming, and the
+alternative is not streaming.
+
+### Decisions in the smaller print
+
+- **`end` includes its own day.** Internally the range is half-open —
+  `[start 00:00, end+1 day 00:00)` — because someone asking for data "to the
+  17th" means the whole of the 17th. An inclusive-looking range that stopped
+  at the 17th's midnight would return nothing for the last day chosen, which
+  is the kind of wrong that looks right.
+- **Both parameters are required**, rather than defaulting. The two available
+  defaults are "everything", an unbounded read on the machine least able to
+  afford one, and "some window the caller did not ask for", which they would
+  have no reason to check.
+- **No maximum span.** Streaming makes a large export slow rather than fatal,
+  and retention already bounds the ping table.
+- **Exports bypass the dashboard cache.** They are downloaded, not polled, and
+  their cache key would be a caller-chosen date range — precisely the
+  unbounded growth `TimedCache`'s own docstring warns about.
+- **`success` exports as `true`/`false`**, matching the JSON API rather than
+  SQLite's 1 and 0. Two ways of getting the same data out should not disagree
+  about what a failed measurement looks like.
+
+### A test that could not fail, again
+
+`response.is_streamed` looked like the natural way to pin the whole point of
+the route. It is worthless here: the Werkzeug test client wraps every response
+body, so it reads true for a fully buffered response — and it read true
+against the 404 that stood there before the route existed, which is how it was
+caught. It passed on the first run, before any implementation, and an
+unexpected pass is a defect in the test.
+
+Replaced by two assertions that can actually fail. At the unit level, a
+generator of 10,000 rows is handed to `csv_body` and only the first chunk
+taken: exactly one row must have been pulled. At the route level, the response
+must carry **no `Content-Length`** — a body that has been built can be
+measured, and Werkzeug then declares its length. Confirmed by mutation: making
+`csv_body` return `list(...)` turns both red, and the second reported
+`Content-Length: 82`.
+
+Three more mutations, since none of these tests could be watched failing for a
+behavioural reason — a route that does not exist yet is red for every test at
+once, which demonstrates nothing:
+
+- Dropping the eager first chunk: the failed-read test goes red, with "no such
+  table" surfacing mid-stream instead of as a 500.
+- `end` without the extra day: five tests go red, including the one written
+  for it.
+- Serving the export through the cache: the no-caching test goes red.
+
+### Run, not just tested
+
+Against the development database over HTTP, not through the test client. The
+ping export returned 886 lines for 885 stored rows, the seventeen failed pings
+came out with an empty latency and `false`, and the speed test export carried
+all seven columns. Every malformed range — missing, half-given, unparseable,
+backwards — returned 400.
+
+The response header worth having is `Transfer-Encoding: chunked`, which is the
+server confirming it does not know the length: the file really is being read
+as it is sent.
+
+One gap that run does not close, and a test now does: at ~50 KB the whole
+development database is less than one chunk, so the 64 KiB boundary and the
+buffer reset that follows it were never crossed. A 2,000-row unit test crosses
+it and checks the rows survive the split. Without that, the first execution of
+that branch would have been on the Pi.
+
+**Not run on the Pi.** Nothing here needs to be — no new unit, no new
+dependency, no privileged operation — but the claim is "runs on Crostini", not
+"runs on the Pi". The natural time to exercise it there is the same visit that
+installs the admin page's units.
+
+Next: M6's admin page — the config form, its atomic write-back through a
+privileged helper, the Host-header allowlist and CSRF tokens in that same
+commit, and the export's date pickers.

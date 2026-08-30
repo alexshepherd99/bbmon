@@ -15,11 +15,12 @@ from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from flask import Flask, jsonify, render_template, request
+from flask import Flask, Response, jsonify, render_template, request
 from werkzeug.exceptions import BadRequest
 
 from bbmon import __version__, db
 from bbmon.config import Config, ConfigError, load
+from bbmon.web import export
 from bbmon.web.cache import TimedCache
 
 logger = logging.getLogger(__name__)
@@ -235,6 +236,44 @@ def create_app(config: Config, cache: TimedCache | None = None) -> Flask:
             isp=result.isp,
             server=result.server,
             success=result.success,
+        )
+
+    def csv_download(name, columns, rows_in) -> Response:
+        """Stream requirement 8's CSV export of one table over a date range.
+
+        Deliberately outside ``read`` above: an export is large, is downloaded
+        rather than polled, and would key the cache on a caller-chosen date
+        range — the unbounded growth :class:`TimedCache` exists to avoid.
+
+        :param rows_in: Yields the table's rows for a :class:`export.DateRange`.
+        """
+        span = export.requested_range(request.args)
+
+        def rows():
+            # The connection is opened inside the generator so that it lives
+            # exactly as long as the response body does, and is closed even
+            # when a browser abandons the download part way through.
+            with db.connect(config.database_path) as conn:
+                yield from rows_in(conn, span)
+
+        return Response(
+            export.csv_body(columns, rows()),
+            mimetype="text/csv",
+            headers={
+                "Content-Disposition": (
+                    f'attachment; filename="bbmon-{name}-{span.label}.csv"'
+                )
+            },
+        )
+
+    @app.get("/export/ping.csv")
+    def export_ping_results() -> Response:
+        return csv_download("ping", export.PING_COLUMNS, export.ping_rows)
+
+    @app.get("/export/speedtest.csv")
+    def export_speedtest_results() -> Response:
+        return csv_download(
+            "speedtest", export.SPEEDTEST_COLUMNS, export.speedtest_rows
         )
 
     return app
