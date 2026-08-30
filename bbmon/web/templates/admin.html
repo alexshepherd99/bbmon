@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>bbmon admin</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='dashboard.css') }}">
+</head>
+<body>
+  <header>
+    <h1>bbmon admin</h1>
+    <a class="nav" href="{{ url_for('dashboard') }}">Dashboard</a>
+  </header>
+
+  <main>
+    {% if error %}
+      <p class="banner error" role="alert">{{ error }}</p>
+    {% elif message %}
+      <p class="banner" role="status">{{ message }}</p>
+    {% endif %}
+
+    <section class="card">
+      <h2>Settings</h2>
+      <!-- No page-side validation attributes beyond the input types: every
+           value is checked again server-side, and then a third time by root
+           before it is installed. A browser that skipped the check must not
+           be able to get further than a browser that made it. -->
+      <form method="post" action="{{ url_for('admin') }}" class="settings">
+        <input type="hidden" name="{{ csrf_field }}" value="{{ csrf_token }}">
+        {% for field in fields %}
+          <div class="setting">
+            <label for="{{ field.name }}">{{ field.label }}</label>
+            {% if field.kind == 'list' %}
+              <textarea id="{{ field.name }}" name="{{ field.name }}" rows="4"
+                >{{ values.get(field.name, '') }}</textarea>
+            {% else %}
+              <input id="{{ field.name }}" name="{{ field.name }}"
+                     type="{{ 'number' if field.kind == 'int' else 'text' }}"
+                     value="{{ values.get(field.name, '') }}">
+            {% endif %}
+            <p class="card-note">{{ field.name }} &mdash; {{ field.note }}</p>
+          </div>
+        {% endfor %}
+        <div class="controls">
+          <button type="submit" class="primary">Save settings</button>
+        </div>
+        <p class="card-note">
+          Written to {{ config_path }} by a privileged helper, which checks the
+          settings again before installing them. The database location is not
+          editable here.
+        </p>
+      </form>
+    </section>
+
+    <section class="card">
+      <h2>Download data</h2>
+      <!-- One form, two destinations: the dates are the same question for
+           both files, and asking for them twice would be the same form drawn
+           twice. `formaction` is what each button changes. -->
+      <form method="get" class="export">
+        <div class="setting">
+          <label for="export-start">From</label>
+          <input id="export-start" type="date" name="start" value="{{ export_start }}">
+        </div>
+        <div class="setting">
+          <label for="export-end">To</label>
+          <input id="export-end" type="date" name="end" value="{{ export_end }}">
+        </div>
+        <div class="controls">
+          <button type="submit" formaction="{{ url_for('export_ping_results') }}">
+            Ping CSV
+          </button>
+          <button type="submit" formaction="{{ url_for('export_speedtest_results') }}">
+            Speed test CSV
+          </button>
+        </div>
+        <p class="card-note">
+          Both dates are included in full, in UTC. A long ping range is a large
+          file: it is sent as it is read rather than built first, so it starts
+          downloading immediately and takes as long as it takes.
+        </p>
+      </form>
+    </section>
+  </main>
+
+  <footer>
+    <span>version {{ version }}</span>
+    <span class="build">{{ build }}</span>
+  </footer>
+</body>
+</html>

@@ -10,19 +10,29 @@ is hard off and the bind address is explicit rather than implicit.
 
 from __future__ import annotations
 
+import hmac
 import ipaddress
 import logging
+import secrets
 from collections import defaultdict
 from collections.abc import Iterable
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
-from flask import Flask, Response, jsonify, render_template, request
-from werkzeug.exceptions import BadRequest
+from flask import (
+    Flask,
+    Response,
+    jsonify,
+    redirect,
+    render_template,
+    request,
+    url_for,
+)
+from werkzeug.exceptions import BadRequest, Forbidden
 
-from bbmon import __version__, db
-from bbmon.config import Config, ConfigError, load
-from bbmon.web import export
+from bbmon import __version__, configstore, db
+from bbmon.config import Config, ConfigError, load, resolve_path
+from bbmon.web import adminform, export
 from bbmon.web.cache import TimedCache
 
 logger = logging.getLogger(__name__)
@@ -80,14 +90,68 @@ ALWAYS_ALLOWED_HOSTS = frozenset({"localhost"})
 #: a footer is not the place to discover that by wrapping across the page.
 MAX_STAMP_LENGTH = 120
 
+#: The hidden field every state-changing form carries. See
+#: :func:`_new_csrf_token` for what it is protecting without a session to
+#: protect.
+CSRF_FIELD = "csrf_token"
 
-def create_app(config: Config, cache: TimedCache | None = None) -> Flask:
+#: Methods that change nothing and so need no token. Everything else does,
+#: including any route added after this one.
+SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
+
+#: How many days the admin page's export pickers start on. Long enough to be
+#: worth downloading, short enough that the first button press on a Pi 3 is not
+#: a full retention window.
+DEFAULT_EXPORT_DAYS = 7
+
+#: Shown after a save. Deliberately not "saved": the web app only proposes,
+#: and root installs — usually within a second, but this response is written
+#: before that has happened, so claiming success here would sometimes be a
+#: lie. See :mod:`bbmon.configstore`.
+_PROPOSED_NOTE = (
+    "Configuration proposed. It is installed within a moment or two — reload "
+    "this page to see what took effect."
+)
+
+
+def _new_csrf_token() -> str:
+    """A token proving a POST came from a page this app served.
+
+    There is no authentication and so no session to protect — but there is
+    still an action to protect, because any page open in a LAN browser could
+    otherwise POST a configuration or a reboot to the Pi.
+
+    **One token per process, not per request or per visitor.** Its secrecy
+    comes from the same-origin policy: a page on another origin can make the
+    browser send a request here, but cannot read the response to ``/admin``
+    and so cannot learn the token to include. That is the whole of the attack
+    being stopped, and the rebinding route around it — becoming same-origin by
+    pointing a name at the Pi — is what :func:`host_is_allowed` refuses. A
+    per-visitor token would need a signed session cookie and a secret to
+    persist across restarts, which buys nothing here: everyone who can reach
+    the page is equally trusted by requirement 8.
+
+    A restart therefore invalidates any form already open, which shows up as a
+    refused save with a "reload the page" message rather than as anything
+    silent.
+    """
+    return secrets.token_urlsafe(32)
+
+
+def create_app(
+    config: Config, cache: TimedCache | None = None, config_path: Path | None = None
+) -> Flask:
     """Build the application for a given configuration.
 
     :param cache: The query cache. Injectable so tests can control expiry
         rather than wait for it; the default is the ordinary timed one.
+    :param config_path: The configuration file the admin page reads and
+        proposes changes to. Defaults to the same file this process loaded —
+        ``BBMON_CONFIG`` or ``/etc/bbmon/config.yaml``.
     """
     cache = cache if cache is not None else TimedCache()
+    config_path = config_path if config_path is not None else resolve_path()
+    csrf_token = _new_csrf_token()
     app = Flask(__name__)
     # Never on, in any environment: the Werkzeug debugger is remote code
     # execution to anyone who can reach the port, and this port is open to the
@@ -112,6 +176,30 @@ def create_app(config: Config, cache: TimedCache | None = None) -> Flask:
             # The host is not echoed back: whoever sent it already knows it,
             # and it is the one part of the request under their control.
             raise BadRequest("This dashboard does not answer to that host name.")
+
+    @app.before_request
+    def require_csrf_token() -> None:
+        """Refuse a state-changing request that did not come from our own page.
+
+        Registered on the app rather than on the one route that needs it
+        today, so that the force-reboot button — the request whose forgery
+        would actually cost something — is covered the moment it exists rather
+        than by remembering to decorate it.
+        """
+        if request.method in SAFE_METHODS:
+            return
+        submitted = request.form.get(CSRF_FIELD, "")
+        if not hmac.compare_digest(submitted, csrf_token):
+            logger.warning(
+                "Refused a %s to %s carrying no valid token",
+                request.method,
+                request.path,
+            )
+            raise Forbidden(
+                "This request did not come from the admin page, or the page "
+                "was loaded before the web service last restarted. Reload the "
+                "admin page and try again."
+            )
 
     @app.get("/")
     def dashboard() -> str:
@@ -301,6 +389,81 @@ def create_app(config: Config, cache: TimedCache | None = None) -> Flask:
             "speedtest", export.SPEEDTEST_COLUMNS, export.speedtest_rows
         )
 
+    def admin_page(values, message=None, error=None, status=200):
+        """Render requirement 8's admin page.
+
+        :param values: What the form's inputs hold — the file's current
+            settings on a plain visit, and what was just submitted when a save
+            was refused, so a rejected form does not throw away the edit.
+        """
+        today = datetime.now(timezone.utc).date()
+        return (
+            render_template(
+                "admin.html",
+                fields=adminform.FIELDS,
+                values=values,
+                csrf_field=CSRF_FIELD,
+                csrf_token=csrf_token,
+                message=message,
+                error=error,
+                config_path=config_path,
+                export_start=_days_before(today, DEFAULT_EXPORT_DAYS - 1),
+                export_end=today.isoformat(),
+                version=__version__,
+                build=_read_build_stamp(config.database_path.parent / BUILD_STAMP_NAME),
+            ),
+            status,
+        )
+
+    @app.get("/admin")
+    def admin():
+        """Show the configuration as the file currently has it.
+
+        Read from disk on every visit rather than from the settings this
+        process started with, because those two stop agreeing the moment a
+        save is installed: root replaces the file, and the services pick it up
+        on their next cycle. Showing the running copy would mean a save
+        appeared to have done nothing.
+        """
+        try:
+            current = load(config_path)
+        except ConfigError as error:
+            # Still a form, not a dead end: the file on disk being unreadable
+            # is precisely when being able to write a good one back matters.
+            return admin_page(
+                adminform.values_from_config(config),
+                error=(
+                    f"{error} These are the settings this service started "
+                    f"with; saving will replace the file."
+                ),
+            )
+
+        return admin_page(
+            adminform.values_from_config(current),
+            message=_PROPOSED_NOTE if "proposed" in request.args else None,
+        )
+
+    @app.post("/admin")
+    def save_config():
+        """Propose the submitted configuration for root to install.
+
+        The web service cannot write ``/etc/bbmon/config.yaml`` — see
+        :mod:`bbmon.configstore` — so this stages a proposal and root rules on
+        it. Nothing here can report the outcome: by the time this response is
+        written the proposal may not have been read yet. The page says so, and
+        a reload shows what was actually installed.
+        """
+        try:
+            # ``database.path`` comes from the running configuration rather
+            # than the file or the form: it is the database the services are
+            # actually using, and it is the one setting the form cannot move.
+            proposed = adminform.config_from_form(request.form, config)
+            configstore.stage(proposed, configstore.staged_path(config.database_path))
+        except (ConfigError, configstore.ConfigInstallError) as error:
+            return admin_page(request.form.to_dict(), error=str(error), status=400)
+
+        return redirect(url_for("admin", proposed=""))
+
     return app
 
 
@@ -397,6 +560,11 @@ def _read_build_stamp(path: Path) -> str:
 
     line = text.strip().splitlines()[0].strip() if text.strip() else ""
     return line[:MAX_STAMP_LENGTH] if line else UNKNOWN_BUILD
+
+
+def _days_before(day: date, days: int) -> str:
+    """An earlier date, as a ``<input type="date">`` wants it."""
+    return (day - timedelta(days=days)).isoformat()
 
 
 def _requested_history_days() -> int:

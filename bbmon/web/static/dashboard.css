@@ -30,6 +30,22 @@ h2 { font-size: 1rem; margin: 0 0 0.75rem; font-weight: 600; color: var(--muted)
 .status { margin: 0; color: var(--muted); font-size: 0.85rem; }
 .status.error { color: #ff8f8f; }
 
+/* The link between the dashboard and the admin page, pushed to the far end of
+   the header so it does not sit against the status text. */
+.nav {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 0.85rem;
+  /* A fingertip target rather than a line of text, since the page it leads to
+     is the one reached from a phone least often and mis-tapped most. */
+  padding: 0.6rem 0.85rem;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  text-decoration: none;
+}
+
+.nav:hover { color: var(--text); }
+
 .card {
   background: var(--card);
   border: 1px solid var(--line);
@@ -175,11 +191,71 @@ footer {
   font-size: 0.8rem;
 }
 
+/* A message about the last save, or about why it was refused. Full width and
+   above the form, because a refused save is the one thing on this page that
+   must not be scrolled past. */
+.banner {
+  margin: 0;
+  padding: 0.75rem 1rem;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--muted);
+  border-radius: 6px;
+  background: var(--card);
+  font-size: 0.9rem;
+}
+
+.banner.error {
+  border-left-color: #ff8f8f;
+  color: #ff8f8f;
+}
+
+/* One setting per row: label, control, then the file's own name for it. A
+   two-column form would fit fewer characters of a ping target on a phone,
+   which is where this page is most likely to be used. */
+.setting { margin-bottom: 1rem; }
+
+.setting label {
+  display: block;
+  margin-bottom: 0.3rem;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.setting input,
+.setting textarea {
+  width: 100%;
+  max-width: 28rem;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 0.6rem;
+  /* Inputs do not inherit the page font, and a 16px control is also what
+     stops mobile Safari zooming the page when one is focused. */
+  font: inherit;
+  font-size: 1rem;
+}
+
+.setting textarea {
+  resize: vertical;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.95rem;
+}
+
+.settings .controls,
+.export .controls { margin: 1rem 0 0; }
+
+.controls button.primary {
+  background: var(--line);
+  color: var(--text);
+  font-size: 0.95rem;
+}
+
 /* Phones get one column, which is the stacking above. A wider screen has room
    to sit the two slow-moving charts side by side, so the page stops being a
    single long scroll on a laptop. */
 @media (min-width: 60rem) {
-  main {
+  main.dashboard {
     display: grid;
     grid-template-columns: 1fr 1fr;
     align-items: start;
@@ -188,8 +264,8 @@ footer {
   /* The panels that want the full width: the readings, the live chart, and
      the restart table, which is text rather than a plot. */
   #speedtest-panel,
-  main > .card:nth-child(2),
-  main > .card:last-child {
+  main.dashboard > .card:nth-child(2),
+  main.dashboard > .card:last-child {
     grid-column: 1 / -1;
   }
 }
