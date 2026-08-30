@@ -24,11 +24,12 @@ BUILD_STAMP=/var/lib/bbmon/build-stamp
 # reboot mechanism — so a change to bbmon-reboot.path was pulled onto the Pi
 # and never installed, while the update reported success.
 UNITS=(bbmon-init.service bbmon-pinger.service bbmon-speedtest.service
-       bbmon-web.service bbmon-reboot.path)
+       bbmon-web.service bbmon-reboot.path bbmon-config.path)
 
-# Installed and never started here, for the reason bootstrap.sh gives: starting
-# bbmon-reboot.service reboots the machine.
-ON_DEMAND_UNITS=(bbmon-reboot.service)
+# Installed and never started here, for the reasons bootstrap.sh gives:
+# starting bbmon-reboot.service reboots the machine, and bbmon-config.service
+# is only ever the answer to a request somebody just made.
+ON_DEMAND_UNITS=(bbmon-reboot.service bbmon-config.service)
 
 SERVICES=(bbmon-pinger.service bbmon-speedtest.service bbmon-web.service)
 
@@ -138,14 +139,15 @@ main() {
 
     # daemon-reload makes systemd read the new file; it does not re-apply it to
     # a unit that is already running. The three services below are restarted
-    # anyway, and bbmon-init is restarted explicitly — the watcher is the one
-    # that would otherwise keep running its old configuration, which for a
-    # change to its dependencies means the update fixes nothing.
+    # anyway, and bbmon-init is restarted explicitly — the watchers are the
+    # ones that would otherwise keep running their old configuration, which for
+    # a change to their dependencies means the update fixes nothing.
     #
-    # Safe to restart: PathModified= does not fire on a trigger file that is
-    # merely present, confirmed on the Pi at G3.
-    systemctl restart bbmon-reboot.path
-    note "restarted bbmon-reboot.path so the new unit takes effect"
+    # Safe to restart: PathModified= does not fire on a watched file that is
+    # merely present, confirmed on the Pi at G3 for the reboot trigger and the
+    # same directive here.
+    systemctl restart bbmon-reboot.path bbmon-config.path
+    note "restarted the path watchers so the new units take effect"
   fi
 
   log "Restarting"

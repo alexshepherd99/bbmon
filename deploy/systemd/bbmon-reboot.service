@@ -1,7 +1,11 @@
 [Unit]
 Description=bbmon reboot
 Documentation=https://github.com/alexshepherd99/bbmon
-# The only privileged thing bbmon installs. Starting it reboots the machine.
+# One of the two root units bbmon installs, and the dangerous one: starting it
+# reboots the machine. The other is bbmon-config.service, which installs a
+# configuration the web app proposed. This one is the stricter of the pair —
+# it runs no bbmon code at all, where that one has to parse a file to refuse a
+# bad one.
 #
 # There is deliberately no [Install] section: this unit is started by
 # bbmon-reboot.path, never enabled. Enabled, it would reboot the Pi on every

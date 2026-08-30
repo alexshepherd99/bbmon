@@ -14,6 +14,7 @@ from pathlib import Path
 
 import pytest
 
+from bbmon.configstore import WATCHED_STAGE_PATH, staged_path
 from bbmon.reboot import WATCHED_TRIGGER_PATH, trigger_file_path
 
 UNIT_DIR = Path(__file__).resolve().parent.parent / "deploy" / "systemd"
@@ -34,13 +35,23 @@ LONG_RUNNING_UNITS = [
     "bbmon-web.service",
 ]
 
-#: The four units that run bbmon's own code as the bbmon user. The reboot unit
-#: below is deliberately not one of them — it runs as root and runs no Python,
-#: so the directives above are either meaningless or wrong for it.
+#: The four units that run bbmon's own code as the bbmon user. The two root
+#: units below are deliberately not among them, for different reasons:
+#: bbmon-reboot.service runs no Python at all, so these directives are
+#: meaningless or wrong for it, while bbmon-config.service does run Python and
+#: is sandboxed — but as root, so the User= and StateDirectory= assertions here
+#: would be wrong for it. Each has its own tests further down.
 ALL_UNITS = ["bbmon-init.service"] + LONG_RUNNING_UNITS
 
 REBOOT_UNIT = "bbmon-reboot.service"
 REBOOT_PATH_UNIT = "bbmon-reboot.path"
+
+CONFIG_UNIT = "bbmon-config.service"
+CONFIG_PATH_UNIT = "bbmon-config.path"
+
+#: The file the web app writes to propose a configuration. Both units name it
+#: literally, and bbmon.configstore derives it from the configured database.
+STAGED_FILE = "/var/lib/bbmon/config-staged.yaml"
 
 #: The file the unprivileged services write to ask for a reboot. Both units
 #: name it literally, and bbmon.reboot derives it from the configured database.
@@ -57,7 +68,12 @@ def read_unit(name: str) -> configparser.ConfigParser:
 
 
 def test_every_unit_file_is_present() -> None:
-    for name in ALL_UNITS + [REBOOT_UNIT, REBOOT_PATH_UNIT]:
+    for name in ALL_UNITS + [
+        REBOOT_UNIT,
+        REBOOT_PATH_UNIT,
+        CONFIG_UNIT,
+        CONFIG_PATH_UNIT,
+    ]:
         assert (UNIT_DIR / name).is_file(), f"{name} is missing"
 
 
@@ -161,7 +177,11 @@ def test_the_reboot_unit_is_never_enabled() -> None:
 
 
 def test_the_reboot_unit_runs_one_command_and_nothing_of_ours() -> None:
-    """The only privileged thing bbmon installs. It stays this small on purpose."""
+    """The stricter of the two root units. It stays this small on purpose.
+
+    bbmon-config.service also runs as root but has to parse a file to refuse a
+    bad one; this one has no such excuse and runs none of bbmon's code.
+    """
     service = read_unit(REBOOT_UNIT)["Service"]
 
     assert service.get("Type") == "oneshot"
@@ -255,3 +275,101 @@ def test_the_watcher_opts_out_of_the_default_path_dependencies() -> None:
     assert "sysinit.target" in unit.get("After", "")
     assert "shutdown.target" in unit.get("Conflicts", "")
     assert "shutdown.target" in unit.get("Before", "")
+
+
+def test_the_config_installer_is_never_enabled() -> None:
+    """Started by bbmon-config.path on a write, never at boot."""
+    assert "Install" not in read_unit(CONFIG_UNIT), (
+        "an [Install] section would let bbmon-config.service be enabled, "
+        "installing whatever proposal happened to be lying about at boot"
+    )
+
+
+def test_the_config_watcher_fires_on_a_write_not_on_the_file_being_there() -> None:
+    """PathExists= would reinstall the same proposal at every boot."""
+    path_unit = read_unit(CONFIG_PATH_UNIT)["Path"]
+
+    assert path_unit.get("PathModified") == STAGED_FILE
+    assert "PathExists" not in path_unit
+    assert "PathExistsGlob" not in path_unit
+    assert path_unit.get("Unit") == CONFIG_UNIT
+
+
+def test_the_config_watcher_is_the_unit_that_gets_enabled() -> None:
+    assert read_unit(CONFIG_PATH_UNIT)["Install"].get("WantedBy") == "multi-user.target"
+
+
+def test_the_config_watcher_will_not_run_without_a_working_init() -> None:
+    """A Pi whose configuration is already broken must not install another."""
+    unit = read_unit(CONFIG_PATH_UNIT)["Unit"]
+
+    assert "bbmon-init.service" in unit.get("Requires", "")
+    assert "bbmon-init.service" in unit.get("After", "")
+
+
+def test_the_config_watcher_opts_out_of_the_default_path_dependencies() -> None:
+    """G3's ordering cycle, avoided by construction rather than rediscovered.
+
+    The full reasoning is on the reboot watcher's equivalent test. The short
+    version: a path unit with the default dependencies is ordered
+    ``Before=paths.target``, which closes a cycle back through
+    ``bbmon-init.service``, and systemd resolves a cycle by deleting a job.
+    """
+    unit = read_unit(CONFIG_PATH_UNIT)["Unit"]
+
+    assert unit.get("DefaultDependencies") == "no"
+    assert "sysinit.target" in unit.get("After", "")
+    assert "shutdown.target" in unit.get("Conflicts", "")
+    assert "shutdown.target" in unit.get("Before", "")
+
+
+def test_the_staged_path_is_the_file_the_code_writes() -> None:
+    """The unit says it literally; bbmon.configstore derives it from config."""
+    assert STAGED_FILE == str(staged_path("/var/lib/bbmon/bbmon.db"))
+    assert STAGED_FILE == str(WATCHED_STAGE_PATH)
+
+
+def test_the_config_installer_is_sandboxed_despite_running_as_root() -> None:
+    """It runs bbmon's own code as root, which bbmon-reboot.service does not.
+
+    That is the whole reason for the difference in treatment: the reboot unit
+    can be one systemctl call and no Python, and this one cannot, because
+    refusing a bad proposal means parsing it.
+    """
+    service = read_unit(CONFIG_UNIT)["Service"]
+
+    assert service.get("Type") == "oneshot"
+    assert service.get("NoNewPrivileges") == "yes"
+    assert service.get("ProtectSystem") == "strict"
+    assert service.get("ProtectHome") == "yes"
+    assert service.get("CapabilityBoundingSet") == ""
+
+
+def test_the_config_installer_writes_only_the_two_directories_it_must() -> None:
+    writable = read_unit(CONFIG_UNIT)["Service"].get("ReadWritePaths", "").split()
+
+    assert sorted(writable) == ["/etc/bbmon", "/var/lib/bbmon"]
+
+
+def test_the_config_installer_does_not_take_the_state_directory() -> None:
+    """StateDirectory= here would chown /var/lib/bbmon to root.
+
+    This unit has no User=, so systemd would create the state directory as
+    root:root — and every actual bbmon service would then be unable to write
+    its own database. The grant it needs is a plain ReadWritePaths=.
+    """
+    assert "StateDirectory" not in read_unit(CONFIG_UNIT)["Service"]
+
+
+def test_the_config_installer_takes_no_direction_from_its_caller() -> None:
+    """No argument and no BBMON_CONFIG: root names both paths in the code.
+
+    A path passed in here would be a path the unauthenticated web app chose,
+    which is the whole thing this mechanism exists to avoid.
+    """
+    service = read_unit(CONFIG_UNIT)["Service"]
+
+    assert service.get("ExecStart") == (
+        "/opt/bbmon/.venv/bin/python -m bbmon.configstore"
+    )
+    assert "BBMON_CONFIG" not in service.get("Environment", "")

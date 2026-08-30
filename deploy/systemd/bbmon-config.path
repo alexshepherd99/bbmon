@@ -1,0 +1,40 @@
+[Unit]
+Description=bbmon configuration proposal watch
+Documentation=https://github.com/alexshepherd99/bbmon
+# How the unprivileged web app asks for a configuration change: it writes
+# /var/lib/bbmon/config-staged.yaml, and systemd — not bbmon — starts the root
+# unit that rules on it and installs it. /etc/bbmon/config.yaml stays
+# root:bbmon 0640, so an unauthenticated web process never holds write access
+# to a root-owned file in /etc, and NoNewPrivileges=yes stays on every unit
+# that runs bbmon's code.
+#
+# The same pair, and the same reasoning, as bbmon-reboot.path — see that file.
+#
+# Requires= bbmon-init.service so that a Pi whose configuration is already
+# broken cannot be asked to install another one, and After= it so the ordering
+# below is the one that was reasoned about.
+Requires=bbmon-init.service
+
+# DefaultDependencies=no for the reason set out at length in bbmon-reboot.path:
+# a path unit with the default dependencies is implicitly ordered
+# Before=paths.target, which closes an ordering cycle back through
+# bbmon-init.service, and systemd resolves that by deleting a job — at G3 it
+# deleted the init job and nothing bbmon started at all. That defect shipped
+# for two milestones before a real boot found it, so this unit is written with
+# it already known rather than rediscovered.
+#
+# Both orderings go on one line: systemd accumulates repeated After= lines, but
+# the tests read these files with configparser, which keeps only the last.
+DefaultDependencies=no
+After=bbmon-init.service sysinit.target
+Conflicts=shutdown.target
+Before=shutdown.target
+
+[Path]
+# PathModified=, not PathExists=. A proposal that is merely present should not
+# be installed again at every boot; the act being watched for is the write.
+PathModified=/var/lib/bbmon/config-staged.yaml
+Unit=bbmon-config.service
+
+[Install]
+WantedBy=multi-user.target

@@ -113,6 +113,35 @@ def load(path: str | Path | None = None) -> Config:
         raise ConfigError(f"Invalid configuration in {resolved}: {error}")
 
 
+def to_document(config: Config) -> dict[str, dict[str, Any]]:
+    """Return the nested YAML document for a config — the inverse of :func:`load`.
+
+    Built from the same ``_FIELD_MAP`` that reads the file, so a setting added
+    there is written back without a second list to keep in step. Sections come
+    out in the order that map declares them, which is the order the shipped
+    ``deploy/config.yaml`` uses.
+
+    Every setting is written, including ones the file being replaced left at
+    their default. A config file bbmon has written is therefore complete and
+    carries no comments; the shipped file's commentary lives in the repository.
+    """
+    document: dict[str, dict[str, Any]] = {}
+    for (section, key), field_name in _FIELD_MAP.items():
+        document.setdefault(section, {})[key] = _to_yaml_value(
+            getattr(config, field_name)
+        )
+    return document
+
+
+def _to_yaml_value(value: Any) -> Any:
+    """Convert a :class:`Config` field to something YAML can represent."""
+    if isinstance(value, Path):
+        return str(value)
+    if isinstance(value, tuple):
+        return list(value)
+    return value
+
+
 def resolve_path(path: str | Path | None = None) -> Path:
     """Return the configuration file location, honouring ``BBMON_CONFIG``."""
     if path is not None:

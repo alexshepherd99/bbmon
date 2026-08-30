@@ -84,6 +84,17 @@ def test_the_reboot_watcher_is_enabled() -> None:
     assert "bbmon-reboot.path" in unit_list("UNITS")
 
 
+def test_the_config_installer_is_installed_but_never_enabled() -> None:
+    """Enabled, it would install whatever proposal was lying about at boot."""
+    assert "bbmon-config.service" in unit_list("ON_DEMAND_UNITS")
+    assert "bbmon-config.service" not in unit_list("UNITS")
+
+
+def test_the_config_watcher_is_enabled() -> None:
+    """Without it running, the admin page's save would go quietly nowhere."""
+    assert "bbmon-config.path" in unit_list("UNITS")
+
+
 def test_a_wide_open_range_is_left_alone() -> None:
     """The bug G1 found: this used to narrow it to the bbmon group alone."""
     assert range_for(996, *WIDE_OPEN) == ""

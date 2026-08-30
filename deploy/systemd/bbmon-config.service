@@ -1,0 +1,34 @@
+[Unit]
+Description=bbmon configuration install
+Documentation=https://github.com/alexshepherd99/bbmon
+# Started by bbmon-config.path, never enabled — hence no [Install] section,
+# the same rule bbmon-reboot.service follows.
+#
+# It runs as root because /etc/bbmon/config.yaml is root-owned and must stay
+# that way. Unlike bbmon-reboot.service, this one does run bbmon's own code as
+# root, which is a real difference and the reason for the sandboxing below:
+# the reboot unit could avoid Python entirely, and this one cannot, because
+# refusing a bad proposal means parsing it.
+#
+# It takes no argument and reads no configuration to decide what to do. The
+# only input is that a file was written, and bbmon.configstore names both paths
+# literally — a process that runs as root must not take direction from the file
+# it is being asked to replace.
+
+[Service]
+Type=oneshot
+ExecStart=/opt/bbmon/.venv/bin/python -m bbmon.configstore
+
+# Deliberately NOT StateDirectory=bbmon, which every other unit uses. This unit
+# has no User=, so systemd would create and chown /var/lib/bbmon to root:root —
+# leaving every actual bbmon service unable to write its own database. The
+# grant it needs is a plain read-write path.
+ReadWritePaths=/etc/bbmon /var/lib/bbmon
+
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+# Writing a file needs no capability. Root here is about file ownership, not
+# about anything the kernel gates.
+CapabilityBoundingSet=

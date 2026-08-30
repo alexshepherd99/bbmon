@@ -47,15 +47,18 @@ declare -A OOKLA_SHA256=(
 # would fail on a machine that had been bootstrapped successfully.
 APT_PACKAGES=(python3 python3-venv python3-pip iputils-ping rsync curl ca-certificates git)
 
-# Enabled and started. bbmon-reboot.path belongs here: it is the watcher, and
-# it has to be running for a reboot request to be noticed at all.
+# Enabled and started. The two .path units belong here: they are the watchers,
+# and each has to be running for the request it watches for — a reboot, a
+# configuration change from the admin page — to be noticed at all.
 UNITS=(bbmon-init.service bbmon-pinger.service bbmon-speedtest.service
-       bbmon-web.service bbmon-reboot.path)
+       bbmon-web.service bbmon-reboot.path bbmon-config.path)
 
-# Installed and left alone: started by bbmon-reboot.path, never enabled and
-# never started here. bbmon-reboot.service reboots the machine when it starts,
-# so enabling it would put the Pi in a boot loop.
-ON_DEMAND_UNITS=(bbmon-reboot.service)
+# Installed and left alone: each is started by its own .path unit, never
+# enabled and never started here. bbmon-reboot.service reboots the machine when
+# it starts, so enabling it would put the Pi in a boot loop; enabling
+# bbmon-config.service would install whatever proposal happened to be lying
+# about at boot, rather than one somebody just asked for.
+ON_DEMAND_UNITS=(bbmon-reboot.service bbmon-config.service)
 
 # The only units scripts/deploy.sh is allowed to restart without a password.
 # Deliberately not UNITS: bbmon-init is a oneshot that belongs to boot, and
