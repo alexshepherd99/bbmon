@@ -1030,3 +1030,114 @@ closing a session when the work is done, and the 2026-08-28 one, on restoring
 files between mutations. The second bit again today — five mutations across two
 files, one of them brand new and untracked, where `git checkout --` would have
 deleted the file rather than restored it. A scratchpad copy was used instead.
+
+## 2026-08-30 — M6's two security prerequisites, ahead of the form
+
+Both are things `plan.md` said had to exist before or alongside the admin
+page's first POST. Built first, separately, because each is independent of the
+form and a smaller commit is easier to judge than one carrying three concerns.
+
+### The Host-header allowlist landed early rather than late
+
+`plan.md` requires it in **the same commit as the first POST route, not merely
+the same milestone** — the reasoning being that the dashboard has served any
+`Host` since it existed (confirmed live 2026-08-13), which today exposes only
+read-only telemetry because every route is a `GET`, and becomes a remote reboot
+trigger the moment a POST exists.
+
+That constraint says "no later than", so landing it now satisfies it. It is
+strictly safer: the window in which the rule could be forgotten closes today
+rather than when the form is written.
+
+**Any address is answered, and that is the interesting decision.** The
+temptation is to read "allowlist" as a list of who may connect and to want the
+Pi's own address in it. It is not that: it is checked against the name the
+browser asked for. An address cannot be rebound — there is no DNS lookup to
+poison — so allowing all of them gives nothing away, and it is how the
+dashboard is actually reached from a phone. No default could have named a home
+Pi's address here in any case, and `no-machine-specifics-in-git` would have
+ruled out writing one down.
+
+Matched whole, never by suffix: `bbmon.lan.example.com` is a name anyone can
+register, and a suffix rule meant to name one host would admit it.
+
+**The live run is what found the cost.** `penguin.linux.test`, which is how the
+ChromeOS browser reaches the development dashboard under Crostini, is a *name* —
+so it now needs listing in `dev-config.yaml`, and the README says so. The unit
+tests could not have found that; only running the thing did.
+
+### The privileged helper, which is M4's reboot wearing a different hat
+
+`/etc/bbmon/config.yaml` is `root:bbmon 0640` and the web service runs as
+`bbmon`, so it cannot write it. `plan.md` decided at M4 that M6 must not gain
+that access by loosening the permissions, and this is the route it named.
+
+The web app writes a proposal to `/var/lib/bbmon/config-staged.yaml`;
+`bbmon-config.path` notices the write and systemd starts `bbmon-config.service`
+as root. The asking side gains no privilege and passes no argument — the only
+input is that a file was written.
+
+Four refusals on the root side, each closing a way the asking side could lie:
+not a symbolic link (`O_NOFOLLOW`, or the web app names `/etc/shadow` and has
+it copied into a file the service group can read), a regular file owned by
+`bbmon`, valid as a configuration, and not moving `database.path` out from
+under `bbmon-reboot.path`. The proposal is consumed either way, like the reboot
+trigger: a request that has been ruled on is spent.
+
+**Root revalidates rather than trusting the form**, and the reason is not
+mainly the attack. It is the ordinary bug: a mistake in the web app's
+serialiser would otherwise write a file that no service can parse, on a machine
+reachable only over SSH, whose journal does not survive the reboot that would
+follow.
+
+**Two differences from the reboot unit, both deliberate.** This one runs
+bbmon's own Python as root, unavoidably — refusing a bad proposal means parsing
+it — so it is sandboxed where the reboot unit is not. And it must *not* take
+`StateDirectory=bbmon` like every other unit: with no `User=`, systemd would
+create `/var/lib/bbmon` as `root:root` and every actual service would lose
+write access to its own database. That one is written down in the unit, in a
+test, and in `plan.md`, because it is invisible until it has already happened.
+
+`plan.md`'s "no bbmon process is privileged" is narrowed rather than left
+standing. It was true when written and is not any more.
+
+### What the tests could and could not do
+
+Red-first was unavailable for a new module — the only pre-implementation red is
+the `ImportError` that proves nothing — so every guard was confirmed by
+mutation instead. Following symlinks, trusting the owner, dropping the
+revalidation, dropping the trigger guard, not preserving the destination mode,
+and leaving the proposal in place each turned a test red. The units too:
+`PathExists=`, a missing `DefaultDependencies=`, `StateDirectory=`, a widened
+`ReadWritePaths=`, an `[Install]` section, and a `BBMON_CONFIG` passed in.
+
+The allowlist did get a genuine red-first, and its first pass was worth having:
+three "is served" tests survived a mutation that removed the config-side name
+normalisation, because the request side happened to lower-case first. That gap
+was real — a name written `BBmon.LAN` in the YAML file was untested — and three
+tests were added rather than the code simplified.
+
+`test_update_script.py` earned itself again: it caught `update.sh` not knowing
+about the new units. That test exists because the same drift once hid *both*
+halves of M4's reboot mechanism from every update, silently.
+
+### Not run on the Pi
+
+Nothing here has been near hardware. Staging and installing were exercised
+against a scratch directory on Crostini and the allowlist against the live
+service, but the two claims that matter — the path unit actually firing, and
+the installer running as real root against `/etc` — cannot be made from here.
+`systemd-analyze verify` reports only that the Pi's interpreter path does not
+exist on this machine, and it does not detect ordering cycles: that is exactly
+what it failed to catch at G3.
+
+A **second path unit is the shape that caused G3's boot failure**, so the
+ordering is the thing to watch on the next visit. It is written with
+`DefaultDependencies=no` from the start rather than rediscovered, but "written
+correctly" and "boots" are different claims. `plan.md` gains **G5** for this,
+because M6 was planned as dev-only and has now produced Pi work that was
+recorded nowhere.
+
+Next: the admin page itself — the config form and its CSRF tokens, the
+force-reboot button, SIGHUP reload so an installed config takes effect without
+a restart, and the export's date pickers.

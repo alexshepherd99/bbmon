@@ -33,7 +33,7 @@ Development happens on the Chromebook (Crostini); the Pi is a deployment and ver
 
 **M5 — Full dashboard.** *(dev)* **Done (dev) 2026-08-17.** The remaining two charts (hourly box plot over 1 day; speedtest history with selectable range), the pre-aggregation and short-lived server-side cache the charts read through, the restart list with its expected-restart toggle, the version/build footer, and the mobile layout. Also closed the two display defects deferred from 2026-08-09 and 2026-08-12. *Depends on: M3, M4.*
 
-**M6 — Admin page.** *(dev)* Config form with server-side validation and atomic write-back, SIGHUP reload, force-reboot button, CSV export of ping and speedtest data over a selectable date range, and the daily ping-retention purge. *Depends on: M5.*
+**M6 — Admin page.** *(dev + gate G5)* Config form with server-side validation and atomic write-back, SIGHUP reload, force-reboot button, CSV export of ping and speedtest data over a selectable date range, and the daily ping-retention purge. *Depends on: M5.*
 
 **M7 — Operability and release.** *(dev + gate G4)* Log rotation, the security checklist verified end to end, low-spec behaviour measured on the Pi for the first time, and `update.sh` proven from a clean pull. *Depends on: everything above.*
 
@@ -52,6 +52,16 @@ Development happens on the Chromebook (Crostini); the Pi is a deployment and ver
 - Restarting a single service (`systemctl restart bbmon-pinger`) adds no restart row.
 - The NTP wait behaves on a Pi with no RTC: `/run/systemd/timesync/synchronized` appears and the wait ends, rather than timing out at 120s. Measured at 37s, 39s and 55s across three boots.
 - Confirm the pinger keeps `NoNewPrivileges=yes` and still reboots — the whole point of the path unit.
+
+**G5 — the config helper** *(after M6)*. Added 2026-08-30. M6 was planned as dev-only, on the assumption it installed no units; the privileged config helper installs two, so it has Pi work that would otherwise have gone unrecorded. **Unit files changed, so this deploy needs `bootstrap.sh`, not just `deploy.sh`** — G3's lesson was that a unit-file change delivered by `deploy.sh` alone is never installed.
+
+- **The Pi still boots with every unit running.** The first thing to check and the reason this gate exists: a second `.path` unit is the exact shape that produced G3's ordering cycle, where systemd resolved the deadlock by deleting the init job and nothing bbmon started at all. It is written with `DefaultDependencies=no` from the outset, but that is a reason to expect a pass, not evidence of one — and G3 was intermittent, so **reboot more than once**. `systemd-analyze verify` does not detect ordering cycles; only a real boot does.
+- `bbmon-config.path` is active after `bootstrap.sh`, and `bbmon-config.service` is installed but **not** enabled — `systemctl` should report it `static`.
+- Writing a valid proposal to `/var/lib/bbmon/config-staged.yaml` **as the `bbmon` user** installs it: `/etc/bbmon/config.yaml` changes, keeps `root:bbmon 0640`, and the proposal is gone afterwards. This is the whole mechanism, and it has never run as real root against a real `/etc`.
+- A proposal that is a symlink, one owned by another user, and one that is not a valid configuration are each refused, with `/etc/bbmon/config.yaml` unchanged. The symlink case is the escalation the helper exists to refuse, so point it at a root-only file and confirm nothing was copied.
+- The sandboxing does not stop it doing its job: `ProtectSystem=strict` with `ReadWritePaths=` naming only `/etc/bbmon` and `/var/lib/bbmon` is untested against a real filesystem, and getting it wrong fails closed — the install silently does nothing.
+- **`/var/lib/bbmon` is still owned by `bbmon` after this unit has run.** The `StateDirectory=` trap: if that directive is ever added to this unit, systemd chowns the directory to root and every collector loses its database. Worth confirming once by inspection rather than trusting the test that forbids it.
+- The dashboard is still reachable from a phone by address, with the Host allowlist now in force. If the Pi is reached by a **name** rather than an address, that name needs adding to `web.allowed_hosts` — expected, and the point at which the setting earns itself.
 
 **G4 — soak** *(after M7)*. Log rotation observed; full security checklist. The retention purge is **deployed as of 2026-08-28** and runs daily, but with retention left at 30 days and the oldest ping dated 2026-08-19, the first run that deletes anything falls due around **2026-09-18** — it stays silent until then, so an absence of log lines before that date is the purge working, not the purge missing. `update.sh` from a clean git pull was **done 2026-08-19** — its first ever run, which delivered the G3 ordering-cycle fix. **The mobile layout was confirmed on a real phone on 2026-08-28**, closing the item deferred from G1.
 
