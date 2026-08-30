@@ -1141,3 +1141,98 @@ recorded nowhere.
 Next: the admin page itself — the config form and its CSRF tokens, the
 force-reboot button, SIGHUP reload so an installed config takes effect without
 a restart, and the export's date pickers.
+
+## 2026-08-30 — M6's admin page: a form that proposes rather than saves
+
+The third of M6's five commits, and the first page bbmon has that changes
+anything. The config form, its validation, the CSRF token that guards it, and
+the export's date pickers — which came here rather than onto the dashboard
+because requirement 8 puts them on this page and the routes have had no
+control pointing at them since they were written.
+
+### The form shows the file, not the process
+
+Read from disk on every visit. The two copies stop agreeing the moment a save
+is installed — root replaces the file and the services pick it up on their next
+cycle — so rendering the running configuration would make a save that worked
+look like a save that did nothing. It is also the only way the page can answer
+"did that take effect?", which matters more here than usual because the answer
+arrives after the response does.
+
+When the file cannot be read at all the page still draws the form, seeded from
+the running settings and saying which they are. The alternative was an error
+where the form should be, and an unreadable config is exactly the moment being
+able to write a good one back is worth having; a dead end there means an SSH
+session instead.
+
+**The page never says "saved".** It stages a proposal and root rules on it,
+asynchronously, so by the time the response is written the outcome is not
+known. "Proposed — reload to see what took effect" is the true sentence, and
+the reload is also the check.
+
+### `database.path` is not on the form, and that is the whole of its validation
+
+`plan.md` has said since M4 that the form must validate `database.path`
+against the reboot-trigger rule *because the form can set it*. It cannot: the
+setting is not rendered, and the proposal takes its value from the running
+configuration, so a write-back cannot move it even when the thing submitting
+the form is not a browser. A test posts one anyway and watches it ignored.
+
+Applying the trigger rule on the web side as well was tried and dropped. It
+would refuse every save made in development, where the database sits in the
+working tree rather than in `/var/lib/bbmon` — the same asymmetry `reboot.py`
+already draws between the real action and the no-op. The check belongs on the
+side that acts as root, which already has it.
+
+### One CSRF token per process
+
+Not per visitor. There is no authentication and so no session to protect, but
+there is still an action to protect. The token's secrecy comes from the
+same-origin policy: another origin can make a browser post here, but cannot
+read `/admin`'s response and so cannot learn what to include — and the one
+route around that, becoming same-origin by pointing a name at the Pi, is what
+last commit's Host allowlist refuses. The two defences are the same defence.
+
+A signed session cookie would need a secret that survives restarts and would
+buy nothing, since requirement 8 trusts everyone who can reach the page
+equally. The cost of the simpler thing is that a restart refuses a form left
+open in a tab, which shows up as a message asking for a reload rather than as
+anything silent.
+
+Checked in a `before_request` over every unsafe method rather than on the one
+route that has one today, so the force-reboot button is covered the moment it
+exists rather than by remembering to decorate it.
+
+### A mutation that survived, and what it revealed
+
+The guards were confirmed by breaking them, red-first being unavailable for a
+new module: removing the token check, reading the running config instead of
+the file, taking `database.path` from the form, keeping blank list entries,
+losing the submitted values when a save is refused, claiming a save was
+installed, and renaming the export's date field each turned a test red.
+
+One did not. Making an unparseable number read as `0` changed nothing, because
+every integer setting rejects `0` anyway — so the bad-value tests were passing
+on `Config`'s complaint rather than on the form's, and the form's own wording
+for an empty box was untested. That wording is the only reason the form parses
+numbers itself instead of handing the string straight to `Config`: "must be a
+whole number, got `''`" reads as a bug rather than as a field to go and fill
+in. A test now pins it, and the mutation is caught.
+
+### Run, not just tested
+
+Against the live service on Crostini over HTTP. A save staged a proposal
+carrying every setting, including the ones not edited; a POST with no token
+was refused 403; an out-of-range port came back 400 with the reason and the
+rejected value still in its box; the export buttons produced a chunked CSV
+over the range the pickers held; and the page answers to the name the
+ChromeOS browser uses as well as to an address.
+
+**Not run on the Pi, and one part of it cannot be.** In development there is
+no root helper, so a proposal simply sits in the state directory unread —
+which means the round trip from form to installed file has never happened
+anywhere. It is a G5 item, along with the new page on a phone.
+
+Next: M6's force-reboot button, then SIGHUP reload. Before the next deploy,
+a security review in its own session — asked for on 2026-08-30, and recorded
+against G5 in `plan.md` because that is the visit it has to precede.

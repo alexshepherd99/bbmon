@@ -9,10 +9,13 @@ LAN-only, no authentication, designed to run on low-end Pi hardware.
 ## Status
 
 In development — phase 1. The pinger and speed test record to SQLite and the
-dashboard charts them live (M1, M3), the whole system runs on the Pi under
-systemd via the bootstrap and deploy scripts (M2, gate G1 cleared 2026-08-12),
-and it now logs its own restarts and reboots itself on a schedule (M4). Next
-are gates G2 and G3 on the hardware, then M5, the full dashboard.
+dashboard charts them live (M1, M3, M5), the whole system runs on the Pi under
+systemd via the bootstrap and deploy scripts (M2), and it logs its own
+restarts and reboots itself on a schedule (M4). Gates G1–G3 are cleared on the
+hardware. M6, the admin side, is under way: old pings are purged on a
+schedule, the data downloads as CSV, and the configuration is editable from an
+admin page. Left in it are the force-reboot button and SIGHUP reload, then
+gate G5 on the Pi and M7.
 
 ## Deploying to a Pi
 
@@ -60,6 +63,13 @@ interfaces exposes the dashboard to the Chromebook only, as the Crostini
 subnet is host-only. The dashboard answers to any address and to `localhost`
 but refuses host names it has not been told about, so reaching it by name
 takes that one setting — see the comment in `deploy/config.yaml`.
+
+The admin page is at `/admin`: the configuration form, and the date pickers
+the CSV export downloads through. **A save there does nothing in development.**
+The web app cannot write the configuration file — on the Pi it stages a
+proposal that a root helper installs — and no such helper runs here, so the
+proposal is written beside the database and stays there. The page says
+"proposed" rather than "saved" for exactly this reason.
 
 To check a chart change without a browser, `tools/render-dashboard.js` renders
 the real dashboard headlessly and asserts it drew. It needs jsdom, installed
