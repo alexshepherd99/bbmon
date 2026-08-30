@@ -985,3 +985,48 @@ The figure that falls out of it: `bbmon-web` idles at about 38 MB.
 
 Still outstanding for G4 is the same measurement for the pinger and the speed
 test service, which this did not touch.
+
+## 2026-08-30 — Two proposals drafted for `agentic`, on this log's own size
+
+Drafted to `~/.claude/handoff/bbmon-2026-08-30.md`. Neither can be applied from
+here; `agentic` is mounted read-only.
+
+**This file is the evidence for the first one.** It is 987 lines and 17,082
+words across 26 entries, one effort, still mid-flight at M6 of M7. The
+finding is not that it is expensive to read — it is that it does not get read.
+Asked "what's next" at the start of this session, the orientation was
+`BACKLOG.md`, `plan.md` in full, and `tail -120` of this log. Lines 1 to 867
+were never opened. A decision recorded only here is a decision no later
+session sees.
+
+`plan.md` has been absorbing the durable half by hand all along — the
+decisions section, the open items, the four gates. That is the shared
+convention working by accident rather than by instruction.
+
+So the proposal is a mechanical roll point: when a milestone or gate closes,
+its entries and everything older move to `log-archive.md` unchanged, and the
+archive is not read on orientation. Mechanical on purpose — entries move
+because their milestone is finished, never because someone predicted they
+would not be wanted again. The second half of it is that a decision belongs in
+`plan.md` or `requirements.md` when it is settled; the log narrates a
+decision, it does not store it.
+
+Written as a reshape of the two bullets already in `shared/persistent-docs.md`
+rather than a new section, because the standing concern on this project is
+that the shared guidance is outgrowing what actually gets followed.
+
+**The second proposal closes something this log left open on 2026-08-05.** The
+entry above at "Superseded text is deleted here, not annotated" ends "Not yet
+proposed back to `agentic`", and that stood for 25 days — at line 50 of a file
+nobody reaches line 50 of, which is the first proposal's argument making
+itself. It is now drafted, with the honest alternative stated: either the
+shared rule acknowledges clean rewriting as a project-level choice, or bbmon
+conforms and its `CLAUDE.md` is corrected. That is a conversation, not an edit,
+and the receiving session is told to put it to the user rather than choose.
+
+Also checked rather than assumed, per the standing rule about this handoff
+route: **both earlier handoffs are still unapplied.** The 2026-08-17 one, on
+closing a session when the work is done, and the 2026-08-28 one, on restoring
+files between mutations. The second bit again today — five mutations across two
+files, one of them brand new and untracked, where `git checkout --` would have
+deleted the file rather than restored it. A scratchpad copy was used instead.
