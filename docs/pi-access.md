@@ -170,9 +170,19 @@ granting the admin account passwordless sudo for exactly two things — restarti
 `/var/lib/bbmon/build-stamp`. Nothing else, and specifically not `bbmon-init` or
 either half of the reboot mechanism.
 
-This is not the same as the account having no other privilege: the admin user is
-in the `sudo` group like any Debian administrator, and can still do anything
-*with* a password. What the rule limits is what happens without one.
+This is not the same as the account having no other privilege. The admin user is
+in the `sudo` group like any Debian administrator and can do anything *with* a
+password — and it can also reach root *without* one, by a route this rule does
+not close: it owns `/opt/bbmon`, so it can edit the code that
+`bbmon-config.service` runs as root. **What the grant limits is what the
+non-interactive deploy can do. It is not a boundary against the admin account,
+and nothing here should be read as one.**
+
+That is accepted rather than missed. Anyone holding this account can already
+reach root by waiting for an interactive `sudo`, so closing the shorter route
+would not change what a compromised account can do. Revisit it if the Pi ever
+has a second admin login, or becomes reachable from outside the LAN: either
+turns a shortcut for the machine's own owner into a boundary between people.
 
 To check it, drop any cached credential first:
 
@@ -217,4 +227,5 @@ configuration rather than repo configuration, so it is not scripted here.
   data directory.
 - **No blanket passwordless sudo.** Earlier Raspberry Pi OS images gave the
   admin account exactly that, and `deploy.sh` depended on it without saying so;
-  current images do not. The narrow replacement is the section above.
+  current images do not. The narrow replacement is the section above, which
+  limits the deploy rather than the admin account itself.

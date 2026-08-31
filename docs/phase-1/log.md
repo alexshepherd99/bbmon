@@ -1236,3 +1236,61 @@ anywhere. It is a G5 item, along with the new page on a phone.
 Next: M6's force-reboot button, then SIGHUP reload. Before the next deploy,
 a security review in its own session — asked for on 2026-08-30, and recorded
 against G5 in `plan.md` because that is the visit it has to precede.
+
+## 2026-08-31 — The code review the security review did not do
+
+The repository security review ran first, in its own session, and reported
+clean: no credentials, no keys, nothing identifying in any blob, the exposure
+baseline in order. It was asked afterwards whether it had reviewed the code.
+It had not, and had not said so.
+
+**That is the finding worth keeping.** The review reads every blob as *text* and
+none of it as *logic*, which is a reasonable scope — but "clean" does not carry
+a scope, and the report used it without one. Worse, where the review touched
+this plan's security posture it confirmed that controls were *recorded* and
+wrote that up in the same voice as if it had confirmed they were implemented.
+Those are different claims about different things. The generalisation went to
+`agentic` as a proposal against `review-repo-security`: say which question you
+answered, then suggest the code review as its own session.
+
+**What the code review then found, which no scan could have.** `bootstrap.sh`
+chowns `/opt/bbmon` to the admin account — deliberately, so `deploy.sh` needs no
+sudo to rsync into it — and `bbmon-config.service` has root execute
+`/opt/bbmon/.venv/bin/python`. With the passwordless `systemctl restart` grant
+in between, the admin account reaches root without a password. Every file
+involved is unremarkable on its own; the defect exists only in the relationship
+between three of them, which is exactly what reading blobs cannot see.
+
+**The sandbox held where it matters.** The LAN-facing threat is a compromise of
+the web app, which lands as `bbmon` — and `bbmon` is in no supplementary group,
+does not own `/opt`, and has it read-only under `ProtectSystem=strict` besides.
+It cannot reach root by this route or any other found. The escalation needs the
+admin account, which is a far higher bar and one that already implies root by
+other means.
+
+**Decided: correct the documentation, change no code.** `pi-access.md` claimed
+the sudoers rule limited "what happens without a password", and that was simply
+false. It now says what the grant actually limits — the non-interactive deploy —
+and states that it is not a boundary against the admin account. Root-owning
+`/opt/bbmon` would make it one, at the cost of the no-sudo deploy loop, and the
+obvious way to pay that cost is worse than the disease: a passwordless
+`sudo rsync` to an arbitrary path *is* passwordless root, more generally than
+what it would replace. Since anyone holding the admin account reaches root
+anyway by waiting for an interactive `sudo`, the shorter route changes nothing
+about what a compromised account can do.
+
+**The condition that would change that answer** is recorded in both files rather
+than left implicit: a second admin login on the Pi, or the Pi becoming reachable
+from outside the LAN. Either turns a shortcut for the machine's own owner into a
+boundary between people, and then it is worth the deploy loop.
+
+Also found and recorded rather than fixed: the CSV export writes Ookla's `isp`
+and `server` fields unescaped, so a value beginning `=`, `+`, `-` or `@` runs as
+a formula in Excel or Sheets. It is the one place bbmon hands external text to a
+program that executes it. Listed in the security posture as an M6 control.
+
+Nothing else. SQL is parameterised throughout with the two f-string sites
+interpolating module constants only; the ping argv is safe because the hostname
+rule forbids a leading `-`, not because of argv position; the config install is
+TOCTOU-safe on one descriptor; templates autoescape and the front end writes
+only `textContent`. 475 tests green, unchanged.
