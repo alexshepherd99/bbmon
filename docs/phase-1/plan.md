@@ -130,6 +130,8 @@ Committed for phase 1, costed into the milestones above:
 
   **Built 2026-08-30 as `bbmon-config.path` plus `bbmon-config.service`.** The web app writes a proposal to `/var/lib/bbmon/config-staged.yaml`; systemd starts the root unit, which refuses it unless it is a regular file (never a symlink — `O_NOFOLLOW`, or naming `/etc/shadow` would copy it into a file the service group can read), owned by `bbmon`, valid as a configuration, and not moving `database.path` out from under `bbmon-reboot.path`. The proposal is consumed whether accepted or refused. Root revalidates rather than trusting the form, which is what keeps a bug in the web app from leaving every service unable to start.
 
+- **The CSV export escapes a leading formula character.** `isp` and `server` are written straight from Ookla's JSON, which is external input, and a value beginning `=`, `+`, `-` or `@` is executed as a formula when the download is opened in Excel or Google Sheets — the one place bbmon hands external text to another program that runs it. Those two columns are the whole of it: everything else is either generated here or validated on the way in, and `target` cannot start with one because `ping.targets` is checked against the hostname rule. *(M6)* — **found by the 2026-08-31 code review; not yet fixed.**
+
 Deferred to `BACKLOG.md` as hardening rather than hole-closing: a host firewall restricting port 8080 to the LAN subnet, request rate limiting, and admin-page authentication.
 
 **Standing check, every milestone:** if a change adds a way for input to reach a subprocess, the filesystem, or SQL, it gets called out at review time rather than found at G4.
