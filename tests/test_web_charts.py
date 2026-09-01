@@ -68,6 +68,20 @@ def ping(minutes_ago: float, target: str = "8.8.8.8", latency: float | None = 10
     return PingResult(ago(minutes=minutes_ago), target, latency, latency is not None)
 
 
+def within_this_hour(fraction: float) -> datetime:
+    """A time inside the hour the box plot's newest bucket covers.
+
+    Anchored to the top of the hour and worked forward, rather than counted
+    back from now: "six minutes ago" lands in the *previous* hour for the
+    first six minutes of every hour, and a test that wanted both its samples
+    in one bucket then got two. It passed every time it was run except in
+    those few minutes, which is the worst way for a test to be wrong.
+    """
+    now = datetime.now(timezone.utc)
+    top_of_hour = now.replace(minute=0, second=0, microsecond=0)
+    return top_of_hour + (now - top_of_hour) * fraction
+
+
 def store_speedtests(database: Path, *results: SpeedtestResult) -> None:
     with db.connect(database) as conn:
         db.insert_speedtest_results(conn, list(results))
@@ -107,7 +121,11 @@ def test_hourly_pings_return_one_bucket_per_target_per_hour(
 def test_an_hourly_bucket_carries_the_five_box_values_and_a_count(
     database: Path, client: FlaskClient
 ) -> None:
-    store_pings(database, ping(5, latency=10.0), ping(6, latency=20.0))
+    store_pings(
+        database,
+        PingResult(within_this_hour(0.25), "8.8.8.8", 10.0, True),
+        PingResult(within_this_hour(0.75), "8.8.8.8", 20.0, True),
+    )
 
     (bucket,) = client.get("/api/ping/hourly").get_json()["buckets"]
 
