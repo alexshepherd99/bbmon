@@ -81,6 +81,26 @@
         </p>
       </form>
     </section>
+
+    <section class="card">
+      <h2>Reboot</h2>
+      <!-- Its own form, and last on the page: it shares nothing with the
+           settings above, and a button that takes the machine down is not one
+           to sit beside the one that saves. Deliberately not the emphasised
+           style the save button carries. -->
+      <form method="post" action="{{ url_for('force_reboot') }}">
+        <input type="hidden" name="{{ csrf_field }}" value="{{ csrf_token }}">
+        <div class="controls">
+          <button type="submit">Reboot now</button>
+        </div>
+        <p class="card-note">
+          Reboots this machine immediately, by the same route as the scheduled
+          reboot — so it is recorded as an expected restart rather than
+          appearing in the list as a power cut. Nothing answers here until it
+          is back, which takes a minute or so.
+        </p>
+      </form>
+    </section>
   </main>
 
   <footer>

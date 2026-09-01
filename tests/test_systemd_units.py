@@ -151,20 +151,23 @@ def test_units_state_their_config_path_explicitly(name: str) -> None:
     assert "BBMON_CONFIG=/etc/bbmon/config.yaml" in service.get("Environment", "")
 
 
-def test_the_pinger_is_the_service_allowed_to_reboot() -> None:
-    """Requirement 6's schedule runs in the ping loop, so it needs the real action.
+@pytest.mark.parametrize("name", ["bbmon-pinger.service", "bbmon-web.service"])
+def test_the_services_that_can_reboot_are_given_the_real_action(name: str) -> None:
+    """The two ways a reboot is asked for, and the only two units that need it.
 
-    Left to its default the pinger would use the no-op, and a Pi that reports
-    itself healthy would simply never reboot.
+    Requirement 6's schedule runs in the ping loop; requirement 8's button runs
+    in the web app. Left to its default either one would use the no-op, and a
+    Pi that reports itself healthy would simply never reboot — the pinger
+    silently, the button while answering that it had asked.
     """
-    service = read_unit("bbmon-pinger.service")["Service"]
+    service = read_unit(name)["Service"]
     assert "BBMON_REBOOT=systemd" in service.get("Environment", "")
 
 
-@pytest.mark.parametrize("name", ["bbmon-speedtest.service", "bbmon-web.service"])
-def test_no_other_service_is_given_the_real_reboot_action(name: str) -> None:
-    """The web app gets it at M6, with the button; nothing needs it before then."""
-    assert "BBMON_REBOOT" not in read_unit(name)["Service"].get("Environment", "")
+def test_the_speedtest_service_is_not_given_the_real_reboot_action() -> None:
+    """It asks for no reboot, so it is given no way to cause one."""
+    service = read_unit("bbmon-speedtest.service")["Service"]
+    assert "BBMON_REBOOT" not in service.get("Environment", "")
 
 
 def test_the_reboot_unit_is_never_enabled() -> None:

@@ -9,7 +9,11 @@ Wants=network-online.target
 Type=simple
 User=bbmon
 Group=bbmon
-Environment=BBMON_CONFIG=/etc/bbmon/config.yaml
+# BBMON_REBOOT=systemd is what makes requirement 8's force-reboot button do
+# anything: it writes the file bbmon-reboot.path watches, exactly as the
+# pinger's schedule does. Without it the button would answer "requested" and
+# nothing would happen. Still no privilege here — see bbmon/reboot.py.
+Environment="BBMON_CONFIG=/etc/bbmon/config.yaml" "BBMON_REBOOT=systemd"
 ExecStart=/opt/bbmon/.venv/bin/python -m bbmon.web
 
 Restart=on-failure

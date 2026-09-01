@@ -15,7 +15,7 @@ import ipaddress
 import logging
 import secrets
 from collections import defaultdict
-from collections.abc import Iterable
+from collections.abc import Container, Iterable
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
@@ -30,7 +30,7 @@ from flask import (
 )
 from werkzeug.exceptions import BadRequest, Forbidden
 
-from bbmon import __version__, configstore, db
+from bbmon import __version__, configstore, db, reboot
 from bbmon.config import Config, ConfigError, load, resolve_path
 from bbmon.web import adminform, export
 from bbmon.web.cache import TimedCache
@@ -113,6 +113,19 @@ _PROPOSED_NOTE = (
     "this page to see what took effect."
 )
 
+#: The reason a reboot asked for here carries into ``restarts``. It is the
+#: whole of what the list will show about this row, so it says which of
+#: requirement 6's two ways in produced it rather than just "requested".
+_REBOOT_REASON = "force reboot requested from the admin page"
+
+#: Shown once the button has been pressed. Like a save, this is written before
+#: the thing it describes has happened — the machine is still up, and going
+#: down is what stops it answering.
+_REBOOTING_NOTE = (
+    "Reboot requested. This machine goes down in a moment and takes a minute "
+    "or so to come back; the dashboard will not answer until it does."
+)
+
 
 def _new_csrf_token() -> str:
     """A token proving a POST came from a page this app served.
@@ -139,7 +152,10 @@ def _new_csrf_token() -> str:
 
 
 def create_app(
-    config: Config, cache: TimedCache | None = None, config_path: Path | None = None
+    config: Config,
+    cache: TimedCache | None = None,
+    config_path: Path | None = None,
+    reboot_action: reboot.RebootAction | None = None,
 ) -> Flask:
     """Build the application for a given configuration.
 
@@ -148,9 +164,14 @@ def create_app(
     :param config_path: The configuration file the admin page reads and
         proposes changes to. Defaults to the same file this process loaded —
         ``BBMON_CONFIG`` or ``/etc/bbmon/config.yaml``.
+    :param reboot_action: What the force-reboot button does. Defaults to
+        requirement 10's no-op, so an app built without one cannot take a
+        development machine down; :func:`main` passes the action
+        ``BBMON_REBOOT`` names, which on the Pi is the real one.
     """
     cache = cache if cache is not None else TimedCache()
     config_path = config_path if config_path is not None else resolve_path()
+    reboot_action = reboot_action if reboot_action is not None else reboot.NoOpReboot()
     csrf_token = _new_csrf_token()
     app = Flask(__name__)
     # Never on, in any environment: the Werkzeug debugger is remote code
@@ -415,33 +436,36 @@ def create_app(
             status,
         )
 
-    @app.get("/admin")
-    def admin():
-        """Show the configuration as the file currently has it.
+    def admin_view(message=None, error=None, status=200):
+        """Render the page showing the configuration as the file has it.
 
         Read from disk on every visit rather than from the settings this
         process started with, because those two stop agreeing the moment a
         save is installed: root replaces the file, and the services pick it up
         on their next cycle. Showing the running copy would mean a save
         appeared to have done nothing.
+
+        Used by every route that ends on this page, so a POST that comes back
+        to report a failure reports it over the same current settings a plain
+        visit would show.
         """
         try:
-            current = load(config_path)
-        except ConfigError as error:
+            values = adminform.values_from_config(load(config_path))
+        except ConfigError as unreadable:
             # Still a form, not a dead end: the file on disk being unreadable
             # is precisely when being able to write a good one back matters.
-            return admin_page(
-                adminform.values_from_config(config),
-                error=(
-                    f"{error} These are the settings this service started "
-                    f"with; saving will replace the file."
-                ),
+            # A caller's own error wins the banner — it is the newer news.
+            values = adminform.values_from_config(config)
+            error = error or (
+                f"{unreadable} These are the settings this service started "
+                f"with; saving will replace the file."
             )
 
-        return admin_page(
-            adminform.values_from_config(current),
-            message=_PROPOSED_NOTE if "proposed" in request.args else None,
-        )
+        return admin_page(values, message=message, error=error, status=status)
+
+    @app.get("/admin")
+    def admin():
+        return admin_view(message=_visit_message(request.args))
 
     @app.post("/admin")
     def save_config():
@@ -464,7 +488,52 @@ def create_app(
 
         return redirect(url_for("admin", proposed=""))
 
+    @app.post("/admin/reboot")
+    def force_reboot():
+        """Requirement 8's force-reboot button.
+
+        Takes requirement 6's scheduled path rather than a shorter one of its
+        own: the reason is written to the request file first, and only then is
+        the machine asked to go. That is what makes the row the next startup
+        writes an *expected* restart — a button that rebooted without it would
+        record every press as a power cut.
+
+        Nothing here can confirm the machine went down, and a response that
+        claimed it had would be written by a process about to be killed. The
+        page says a reboot was asked for; the restart list says whether one
+        happened.
+        """
+        try:
+            reboot.request_reboot(
+                reboot.request_file_path(config.database_path),
+                reboot_action,
+                reason=_REBOOT_REASON,
+            )
+        except reboot.RebootError as error:
+            # A reboot that cannot be started is the failure this button
+            # exists to make visible: the alternative is a Pi that is asked
+            # to reboot, does not, and says nothing about it.
+            return admin_view(
+                error=f"The reboot could not be started: {error}", status=500
+            )
+
+        return redirect(url_for("admin", rebooting=""))
+
     return app
+
+
+def _visit_message(args: Container[str]) -> str | None:
+    """What a redirect back to the admin page came here to say.
+
+    Carried in the query string rather than in a flash, which would need a
+    session and a secret key to sign the cookie holding it — for two fixed
+    sentences that say what was just asked for.
+    """
+    if "proposed" in args:
+        return _PROPOSED_NOTE
+    if "rebooting" in args:
+        return _REBOOTING_NOTE
+    return None
 
 
 def host_is_allowed(host: str, allowed: Iterable[str]) -> bool:
@@ -609,11 +678,17 @@ def main() -> int:
     try:
         config = load()
         db.initialise(config.database_path)
-    except (ConfigError, db.DatabaseError):
+        # Refusing to start is the right answer to a reboot action that cannot
+        # work — the same call the pinger makes, and for the same reason: the
+        # alternative is a button that writes a file nothing is watching.
+        action = reboot.action_from_environment(
+            reboot.trigger_file_path(config.database_path)
+        )
+    except (ConfigError, db.DatabaseError, reboot.RebootError):
         logger.exception("The web app could not start")
         return 1
 
-    app = create_app(config)
+    app = create_app(config, reboot_action=action)
     logger.info(
         "Serving the dashboard on http://%s:%d", config.web_host, config.web_port
     )
