@@ -19,12 +19,13 @@ from __future__ import annotations
 
 import logging
 import sys
+import threading
 
 from bbmon import db, reboot
 from bbmon.collectors.ping import PingCollector
-from bbmon.config import ConfigError, load
+from bbmon.config import Config, ConfigError, load, reloaded
 from bbmon.db import DatabaseError
-from bbmon.reboot import RebootError, RebootScheduler
+from bbmon.reboot import RebootAction, RebootError, RebootScheduler
 from bbmon.retention import RetentionPurge
 from bbmon.service import FLUSH_INTERVAL_SECONDS, run_until_stopped
 
@@ -43,15 +44,41 @@ def main() -> int:
         reboot_action = reboot.action_from_environment(
             reboot.trigger_file_path(config.database_path)
         )
-        scheduler = RebootScheduler(
-            interval_days=config.reboot_interval_days,
-            action=reboot_action,
-            request_path=reboot.request_file_path(config.database_path),
-        )
     except (ConfigError, DatabaseError, RebootError):
         logger.exception("The pinger could not start")
         return 1
 
+    # Requirement 2's SIGHUP reload, as a rebuild rather than as a set of
+    # settings pushed into running objects. Everything below is constructed
+    # from one configuration, so a reload cannot leave the service part way
+    # between two of them — and the reload path is the startup path, which is
+    # the only one that has to be right anyway. What it costs is the state
+    # those objects hold: the purge runs again on the first cycle after a
+    # reload, and a reboot already asked for is asked for again.
+    reloading = threading.Event()
+    while True:
+        code = _run(config, reboot_action, reloading)
+        if not reloading.is_set():
+            return code
+
+        reloading.clear()
+        config = reloaded(config)
+
+
+def _run(
+    config: Config, reboot_action: RebootAction, reloading: threading.Event
+) -> int:
+    """Run the pinger on one configuration, until it is stopped or reloaded.
+
+    Nothing here can fail the way :func:`main`'s first build can: ``reloaded``
+    refuses a configuration that moves ``database.path``, so the database, the
+    reboot trigger and the request file are the ones this process started with.
+    """
+    scheduler = RebootScheduler(
+        interval_days=config.reboot_interval_days,
+        action=reboot_action,
+        request_path=reboot.request_file_path(config.database_path),
+    )
     purge = RetentionPurge(
         database_path=config.database_path,
         ping_days=config.retention_ping_days,
@@ -90,6 +117,7 @@ def main() -> int:
         config.database_path,
         flush_interval_seconds=FLUSH_INTERVAL_SECONDS,
         between_cycles=between_cycles,
+        reloading=reloading,
     )
 
 

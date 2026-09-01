@@ -41,11 +41,14 @@ def captured(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     """Run the entrypoint's wiring without running its loop."""
     captured: dict[str, Any] = {}
 
-    def fake_run(collector, database_path, flush_interval_seconds, between_cycles):
+    def fake_run(
+        collector, database_path, flush_interval_seconds, between_cycles, reloading
+    ):
         captured["collector"] = collector
         captured["database_path"] = database_path
         captured["flush"] = flush_interval_seconds
         captured["between_cycles"] = between_cycles
+        captured["reloading"] = reloading
         return 0
 
     monkeypatch.setattr(pinger, "run_until_stopped", fake_run)
@@ -120,6 +123,59 @@ def test_the_retention_purge_shares_the_ping_loop(
     with db.connect(database) as conn:
         remaining = db.recent_ping_results(conn, since=days_ago(3650))
     assert [result.latency_ms for result in remaining] == [2.0]
+
+
+def reload_once(
+    monkeypatch: pytest.MonkeyPatch, service, edit
+) -> list[Any]:
+    """Run the entrypoint, asking it to reload after its first pass.
+
+    :param edit: Applied to the configuration file before the reload, so the
+        second pass sees a different file from the first.
+    :return: The collector each pass was built with, in order.
+    """
+    collectors: list[Any] = []
+
+    def fake_run(
+        collector, database_path, flush_interval_seconds, between_cycles, reloading
+    ):
+        collectors.append(collector)
+        if len(collectors) == 1:
+            edit()
+            reloading.set()
+        return 0
+
+    monkeypatch.setattr(service, "run_until_stopped", fake_run)
+    assert service.main() == 0
+    return collectors
+
+
+def test_a_reload_rebuilds_the_collector_from_the_changed_file(
+    config_file: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Requirement 2's SIGHUP reload: an edit takes effect with no restart."""
+    collectors = reload_once(
+        monkeypatch,
+        pinger,
+        lambda: config_file.write_text(
+            config_file.read_text().replace("interval_seconds: 9", "interval_seconds: 21")
+        ),
+    )
+
+    assert [collector.interval_seconds for collector in collectors] == [9, 21]
+
+
+def test_a_reload_of_an_unusable_file_keeps_the_pinger_running(
+    config_file: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The service must survive a bad edit, still pinging on the old settings."""
+    collectors = reload_once(
+        monkeypatch,
+        pinger,
+        lambda: config_file.write_text("ping:\n  interval_seconds: nonsense\n"),
+    )
+
+    assert [collector.interval_seconds for collector in collectors] == [9, 9]
 
 
 def test_a_misconfigured_reboot_action_stops_the_service_starting(

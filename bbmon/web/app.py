@@ -14,10 +14,12 @@ import hmac
 import ipaddress
 import logging
 import secrets
+import signal
 from collections import defaultdict
 from collections.abc import Container, Iterable
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
+from types import FrameType
 
 from flask import (
     Flask,
@@ -31,7 +33,7 @@ from flask import (
 from werkzeug.exceptions import BadRequest, Forbidden
 
 from bbmon import __version__, configstore, db, reboot
-from bbmon.config import Config, ConfigError, load, resolve_path
+from bbmon.config import Config, ConfigError, load, reloaded, resolve_path
 from bbmon.web import adminform, export
 from bbmon.web.cache import TimedCache
 
@@ -127,6 +129,55 @@ _REBOOTING_NOTE = (
 )
 
 
+#: Where the running configuration is kept on the app, for :func:`main` to
+#: reach when a signal arrives and for a test to reach without one.
+EXTENSION_KEY = "bbmon"
+
+
+class RunningConfig:
+    """The settings the routes read, which a reload replaces whole.
+
+    Requirement 2's SIGHUP reload, for the one service that cannot answer it
+    by rebuilding the way the collectors do: this one is inside ``app.run``,
+    and what a restart would move is a listening socket.
+
+    Rebinding a single attribute is the whole mechanism, and it is what makes
+    the reload safe while requests are in flight: a request thread reads the
+    configuration from before the reload or the one from after it, never a
+    mixture of the two.
+    """
+
+    def __init__(self, config: Config, path: Path) -> None:
+        """
+        :param config: What this service started with.
+        :param path: The configuration file to re-read on a reload.
+        """
+        self.config = config
+        self._path = path
+
+    def reload(self) -> None:
+        """Re-read the configuration file, keeping what cannot change here.
+
+        ``web.host`` and ``web.port`` are bound before the first request
+        arrives and no signal can move a socket, so a change to either is
+        reported rather than pretended to — the same shape as ``database.path``,
+        which :func:`bbmon.config.reloaded` refuses on behalf of every service.
+        """
+        previous = self.config
+        self.config = reloaded(previous, self._path)
+
+        if (self.config.web_host, self.config.web_port) != (
+            previous.web_host,
+            previous.web_port,
+        ):
+            logger.warning(
+                "web.host and web.port take effect only when this service is "
+                "restarted; still serving on %s:%d",
+                previous.web_host,
+                previous.web_port,
+            )
+
+
 def _new_csrf_token() -> str:
     """A token proving a POST came from a page this app served.
 
@@ -172,8 +223,12 @@ def create_app(
     cache = cache if cache is not None else TimedCache()
     config_path = config_path if config_path is not None else resolve_path()
     reboot_action = reboot_action if reboot_action is not None else reboot.NoOpReboot()
+    running = RunningConfig(config, config_path)
     csrf_token = _new_csrf_token()
     app = Flask(__name__)
+    # Reachable as app.extensions["bbmon"], which is how main() hands the
+    # reload to a signal and how a test asks for one without sending a signal.
+    app.extensions[EXTENSION_KEY] = running
     # Never on, in any environment: the Werkzeug debugger is remote code
     # execution to anyone who can reach the port, and this port is open to the
     # whole LAN with no authentication in front of it.
@@ -188,7 +243,7 @@ def create_app(
         files and every route added later — including the admin page's POSTs,
         where a rebound origin would be able to reboot the Pi.
         """
-        if not host_is_allowed(request.host, config.web_allowed_hosts):
+        if not host_is_allowed(request.host, running.config.web_allowed_hosts):
             logger.warning(
                 "Refused a request for host %r; add it to web.allowed_hosts if "
                 "it is a name this dashboard should answer to",
@@ -227,7 +282,9 @@ def create_app(
         return render_template(
             "dashboard.html",
             version=__version__,
-            build=_read_build_stamp(config.database_path.parent / BUILD_STAMP_NAME),
+            build=_read_build_stamp(
+                running.config.database_path.parent / BUILD_STAMP_NAME
+            ),
         )
 
     def read(key, query, ttl_seconds=None):
@@ -239,7 +296,7 @@ def create_app(
         """
 
         def produce():
-            with db.connect(config.database_path) as conn:
+            with db.connect(running.config.database_path) as conn:
                 return query(conn)
 
         return cache.get_or_call(key, produce, ttl_seconds=ttl_seconds)
@@ -328,7 +385,7 @@ def create_app(
     @app.get("/api/restarts")
     def restarts():
         include_expected = _requested_include_expected()
-        limit = config.web_restart_limit
+        limit = running.config.web_restart_limit
         recorded = read(
             ("restarts", limit, include_expected),
             lambda conn: db.recent_restarts(
@@ -387,7 +444,7 @@ def create_app(
             # The connection is opened inside the generator so that it lives
             # exactly as long as the response body does, and is closed even
             # when a browser abandons the download part way through.
-            with db.connect(config.database_path) as conn:
+            with db.connect(running.config.database_path) as conn:
                 yield from rows_in(conn, span)
 
         return Response(
@@ -431,7 +488,9 @@ def create_app(
                 export_start=_days_before(today, DEFAULT_EXPORT_DAYS - 1),
                 export_end=today.isoformat(),
                 version=__version__,
-                build=_read_build_stamp(config.database_path.parent / BUILD_STAMP_NAME),
+                build=_read_build_stamp(
+                running.config.database_path.parent / BUILD_STAMP_NAME
+            ),
             ),
             status,
         )
@@ -455,7 +514,7 @@ def create_app(
             # Still a form, not a dead end: the file on disk being unreadable
             # is precisely when being able to write a good one back matters.
             # A caller's own error wins the banner — it is the newer news.
-            values = adminform.values_from_config(config)
+            values = adminform.values_from_config(running.config)
             error = error or (
                 f"{unreadable} These are the settings this service started "
                 f"with; saving will replace the file."
@@ -481,7 +540,7 @@ def create_app(
             # ``database.path`` comes from the running configuration rather
             # than the file or the form: it is the database the services are
             # actually using, and it is the one setting the form cannot move.
-            proposed = adminform.config_from_form(request.form, config)
+            proposed = adminform.config_from_form(request.form, running.config)
             configstore.stage(proposed, configstore.staged_path(config.database_path))
         except (ConfigError, configstore.ConfigInstallError) as error:
             return admin_page(request.form.to_dict(), error=str(error), status=400)
@@ -505,7 +564,7 @@ def create_app(
         """
         try:
             reboot.request_reboot(
-                reboot.request_file_path(config.database_path),
+                reboot.request_file_path(running.config.database_path),
                 reboot_action,
                 reason=_REBOOT_REASON,
             )
@@ -520,6 +579,27 @@ def create_app(
         return redirect(url_for("admin", rebooting=""))
 
     return app
+
+
+def _reload_on_sighup(app: Flask) -> None:
+    """Re-read the configuration when systemd asks this service to reload.
+
+    Installed by :func:`main` rather than by :func:`create_app`, because a
+    signal handler belongs to the process and not to an app: a test building
+    three applications would otherwise leave the third one's handler speaking
+    for all of them, and would install a handler at all in a suite that never
+    asked for one.
+    """
+    running = app.extensions[EXTENSION_KEY]
+
+    def reload_config(signum: int, _frame: FrameType | None) -> None:
+        logger.info(
+            "Received %s, re-reading the configuration",
+            signal.Signals(signum).name,
+        )
+        running.reload()
+
+    signal.signal(signal.SIGHUP, reload_config)
 
 
 def _visit_message(args: Container[str]) -> str | None:
@@ -689,6 +769,7 @@ def main() -> int:
         return 1
 
     app = create_app(config, reboot_action=action)
+    _reload_on_sighup(app)
     logger.info(
         "Serving the dashboard on http://%s:%d", config.web_host, config.web_port
     )

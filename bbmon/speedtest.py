@@ -17,10 +17,11 @@ from __future__ import annotations
 
 import logging
 import sys
+import threading
 
 from bbmon import db, reboot
 from bbmon.collectors.speedtest import SpeedtestCollector
-from bbmon.config import ConfigError, load
+from bbmon.config import Config, ConfigError, load, reloaded
 from bbmon.db import DatabaseError
 from bbmon.service import FLUSH_EVERY_CYCLE, run_until_stopped
 
@@ -46,6 +47,22 @@ def main() -> int:
         logger.exception("The speed test service could not start")
         return 1
 
+    # Requirement 2's SIGHUP reload, the same rebuild the pinger does and for
+    # the same reason: the collector is built from one configuration, so a
+    # reload replaces it rather than editing it. A test running when the signal
+    # arrives finishes and is written before this comes back.
+    reloading = threading.Event()
+    while True:
+        code = _run(config, reloading)
+        if not reloading.is_set():
+            return code
+
+        reloading.clear()
+        config = reloaded(config)
+
+
+def _run(config: Config, reloading: threading.Event) -> int:
+    """Run the speed test on one configuration, until stopped or reloaded."""
     collector = SpeedtestCollector(
         interval_hours=config.speedtest_interval_hours,
         # Requirement 5. Asked freshly each cycle, and answered from the
@@ -67,6 +84,7 @@ def main() -> int:
         collector,
         config.database_path,
         flush_interval_seconds=FLUSH_EVERY_CYCLE,
+        reloading=reloading,
     )
 
 

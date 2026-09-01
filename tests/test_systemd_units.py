@@ -164,6 +164,36 @@ def test_the_services_that_can_reboot_are_given_the_real_action(name: str) -> No
     assert "BBMON_REBOOT=systemd" in service.get("Environment", "")
 
 
+@pytest.mark.parametrize("name", LONG_RUNNING_UNITS)
+def test_a_running_service_can_be_told_to_re_read_its_configuration(
+    name: str,
+) -> None:
+    """Requirement 2's SIGHUP reload, from systemd's side of it.
+
+    Without ExecReload= there is no `systemctl reload`, and the code that
+    answers the signal would only ever be reached by someone sending it by
+    hand — which is not how the admin page's saves arrive.
+    """
+    service = read_unit(name)["Service"]
+    assert service.get("ExecReload") == "/bin/kill -HUP $MAINPID"
+
+
+def test_installing_a_configuration_tells_the_services_to_re_read_it() -> None:
+    """Otherwise a save reaches /etc and stops there, which is a silent failure.
+
+    try-reload-or-restart, so a service that is not running is left alone
+    rather than started by a configuration change, and the leading `-` so that
+    a failure to reload does not report the install — which did happen — as
+    the thing that failed.
+    """
+    service = read_unit(CONFIG_UNIT)["Service"]
+
+    assert service.get("ExecStartPost") == (
+        "-/usr/bin/systemctl try-reload-or-restart "
+        "bbmon-pinger.service bbmon-speedtest.service bbmon-web.service"
+    )
+
+
 def test_the_speedtest_service_is_not_given_the_real_reboot_action() -> None:
     """It asks for no reboot, so it is given no way to cause one."""
     service = read_unit("bbmon-speedtest.service")["Service"]

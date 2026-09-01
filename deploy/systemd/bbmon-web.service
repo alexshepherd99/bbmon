@@ -15,6 +15,11 @@ Group=bbmon
 # nothing would happen. Still no privilege here — see bbmon/reboot.py.
 Environment="BBMON_CONFIG=/etc/bbmon/config.yaml" "BBMON_REBOOT=systemd"
 ExecStart=/opt/bbmon/.venv/bin/python -m bbmon.web
+# Requirement 2's reload — see bbmon-pinger.service. This one replaces the
+# settings its routes read rather than rebuilding: it is inside a serving loop
+# with a socket bound, so web.host and web.port still need a restart and the
+# journal says so when either changes.
+ExecReload=/bin/kill -HUP $MAINPID
 
 Restart=on-failure
 RestartSec=5

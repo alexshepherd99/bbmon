@@ -9,6 +9,11 @@ stops a service by sending SIGTERM, which by default kills the process outright
 — which at M1 silently discarded everything buffered since the last flush, on
 every restart and every deploy. Every collector service goes through this
 function so that fix cannot be forgotten by the next one.
+
+SIGHUP is handled by the same mechanism for a different end: it stops the loop
+in the same orderly way, so that the service around it can be rebuilt from a
+configuration file that has changed without anything being restarted. See
+requirement 2 and :func:`bbmon.config.reloaded`.
 """
 
 from __future__ import annotations
@@ -152,13 +157,23 @@ def run_until_stopped(
     database_path: str | Path,
     flush_interval_seconds: int = FLUSH_INTERVAL_SECONDS,
     between_cycles: Callable[[], None] = lambda: None,
+    reloading: threading.Event | None = None,
 ) -> int:
     """Run ``collector`` until the service is asked to stop, and report an exit code.
 
     Installs the SIGTERM and SIGINT handlers that let the loop finish its cycle
     and write what it is holding, rather than being killed mid-buffer.
 
+    :param reloading: Set here when SIGHUP asks for the configuration to be
+        read again — requirement 2. The loop then comes back exactly as it
+        would for SIGTERM, having finished its cycle and written what it held,
+        and the caller rebuilds from the new file and calls this again. A
+        caller that passes nothing leaves SIGHUP at its default, which
+        terminates the process: a service that cannot reload should not claim
+        to, and systemd only sends this to a unit declaring ``ExecReload=``.
     :return: ``0`` after a clean stop, ``1`` if the collector cannot run at all.
+        A reload returns ``0`` too — it is the caller's event, not the exit
+        code, that says which of the two happened.
     """
     stopping = threading.Event()
 
@@ -168,8 +183,21 @@ def run_until_stopped(
         )
         stopping.set()
 
+    def request_reload(signum: int, _frame: FrameType | None) -> None:
+        logger.info(
+            "Received %s, finishing the current cycle before re-reading the "
+            "configuration",
+            signal.Signals(signum).name,
+        )
+        # Both, and in this order: the loop only ever watches for the stop, and
+        # the caller reads the reload flag once it has come back.
+        reloading.set()
+        stopping.set()
+
     signal.signal(signal.SIGTERM, request_stop)
     signal.signal(signal.SIGINT, request_stop)
+    if reloading is not None:
+        signal.signal(signal.SIGHUP, request_reload)
 
     service = CollectorService(
         collector,
@@ -188,5 +216,8 @@ def run_until_stopped(
         logger.exception("The %s collector cannot run", collector.name)
         return 1
 
-    logger.info("Stopped cleanly")
+    if reloading is not None and reloading.is_set():
+        logger.info("Stopped cleanly to reload")
+    else:
+        logger.info("Stopped cleanly")
     return 0

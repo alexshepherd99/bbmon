@@ -11,6 +11,10 @@ User=bbmon
 Group=bbmon
 Environment=BBMON_CONFIG=/etc/bbmon/config.yaml
 ExecStart=/opt/bbmon/.venv/bin/python -m bbmon.speedtest
+# Requirement 2's reload — see bbmon-pinger.service. It matters most here: this
+# service sleeps for hours, so without it a changed interval would not be read
+# until the next test was due anyway.
+ExecReload=/bin/kill -HUP $MAINPID
 
 Restart=on-failure
 RestartSec=5

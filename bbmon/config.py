@@ -113,6 +113,43 @@ def load(path: str | Path | None = None) -> Config:
         raise ConfigError(f"Invalid configuration in {resolved}: {error}")
 
 
+def reloaded(running: Config, path: str | Path | None = None) -> Config:
+    """The configuration file as it now reads, for a service already running on it.
+
+    Requirement 2's "services re-read on ... SIGHUP", and the one place the
+    rules for that live, because all three services need the same answer.
+
+    **Never raises, and never applies half a file.** A file that will not load
+    leaves the running configuration in place: a service that stopped
+    measuring because someone saved a typo has failed at the more important
+    job. So does one that moves ``database.path``, which cannot change under a
+    service that already has the database open — and which would take the
+    reboot trigger and the staged-proposal path with it. That needs a restart,
+    and says so rather than applying the rest of the file around it.
+
+    :param running: What the caller is running on now, returned unchanged when
+        the file cannot be applied.
+    :param path: The file to re-read, defaulting as :func:`load` does.
+    """
+    try:
+        candidate = load(path)
+    except ConfigError:
+        logger.exception("Keeping the running configuration; the file was not usable")
+        return running
+
+    if candidate.database_path != running.database_path:
+        logger.warning(
+            "Ignoring this configuration: database.path has changed from %s to "
+            "%s, which takes effect only when the service restarts",
+            running.database_path,
+            candidate.database_path,
+        )
+        return running
+
+    logger.info("Re-read the configuration from %s", resolve_path(path))
+    return candidate
+
+
 def to_document(config: Config) -> dict[str, dict[str, Any]]:
     """Return the nested YAML document for a config — the inverse of :func:`load`.
 

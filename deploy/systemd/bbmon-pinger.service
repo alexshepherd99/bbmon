@@ -15,6 +15,11 @@ Group=bbmon
 # development machine cannot reboot itself.
 Environment="BBMON_CONFIG=/etc/bbmon/config.yaml" "BBMON_REBOOT=systemd"
 ExecStart=/opt/bbmon/.venv/bin/python -m bbmon.pinger
+# Requirement 2's reload: the service finishes its cycle, writes what it has
+# buffered, and rebuilds itself from the configuration file. bbmon-config.service
+# sends this after installing a save, so an edit from the admin page takes
+# effect without anything being restarted.
+ExecReload=/bin/kill -HUP $MAINPID
 
 # Requirement 10: a crashed collector recovers on its own.
 Restart=on-failure

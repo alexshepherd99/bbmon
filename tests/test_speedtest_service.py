@@ -24,12 +24,37 @@ def config_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     return path
 
 
+def test_a_reload_rebuilds_the_collector_from_the_changed_file(
+    config_file: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Requirement 2's SIGHUP reload, on the service with the longest interval.
+
+    Twelve hours is a long time to wait for a setting to take effect, and a
+    restart is what it would otherwise cost.
+    """
+    intervals: list[int] = []
+
+    def fake_run(collector, database_path, flush_interval_seconds, reloading):
+        intervals.append(collector.interval_seconds)
+        if len(intervals) == 1:
+            config_file.write_text(
+                config_file.read_text().replace("interval_hours: 6", "interval_hours: 12")
+            )
+            reloading.set()
+        return 0
+
+    monkeypatch.setattr(speedtest, "run_until_stopped", fake_run)
+
+    assert speedtest.main() == 0
+    assert intervals == [6 * 3600, 12 * 3600]
+
+
 def test_the_service_configures_the_collector_from_the_config_file(
     config_file: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     captured = {}
 
-    def fake_run(collector, database_path, flush_interval_seconds):
+    def fake_run(collector, database_path, flush_interval_seconds, reloading):
         captured["interval_seconds"] = collector.interval_seconds
         captured["flush"] = flush_interval_seconds
         captured["database_path"] = database_path
@@ -48,7 +73,7 @@ def test_the_service_does_not_buffer(
     """A row every few hours held in memory is a row a crash loses."""
     captured = {}
 
-    def fake_run(collector, database_path, flush_interval_seconds):
+    def fake_run(collector, database_path, flush_interval_seconds, reloading):
         captured["flush"] = flush_interval_seconds
         return 0
 
@@ -85,7 +110,7 @@ def test_the_collector_is_told_when_a_reboot_is_near(
 
     captured = {}
 
-    def fake_run(collector, database_path, flush_interval_seconds):
+    def fake_run(collector, database_path, flush_interval_seconds, reloading):
         captured["results"] = collector.collect()
         return 0
 
@@ -116,7 +141,7 @@ def test_the_collector_runs_when_the_reboot_is_a_long_way_off(
 
     captured = {}
 
-    def fake_run(collector, database_path, flush_interval_seconds):
+    def fake_run(collector, database_path, flush_interval_seconds, reloading):
         captured["results"] = collector.collect()
         return 0
 
@@ -160,7 +185,7 @@ def test_a_real_collector_run_reaches_the_database(
 
     monkeypatch.setattr(collector_module.subprocess, "run", fake_subprocess_run)
 
-    def run_one_cycle(collector, database_path, flush_interval_seconds):
+    def run_one_cycle(collector, database_path, flush_interval_seconds, reloading):
         with db.connect(database_path) as conn:
             collector.store(conn, collector.collect())
         return 0

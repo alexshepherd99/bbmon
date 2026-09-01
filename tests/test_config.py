@@ -1,10 +1,11 @@
 """Tests for configuration loading and validation."""
 
+import logging
 from pathlib import Path
 
 import pytest
 
-from bbmon.config import CONFIG_PATH_ENV_VAR, Config, ConfigError, load
+from bbmon.config import CONFIG_PATH_ENV_VAR, Config, ConfigError, load, reloaded
 
 
 def write_config(tmp_path: Path, text: str) -> Path:
@@ -249,3 +250,62 @@ def test_section_must_be_a_mapping(tmp_path: Path) -> None:
 
     with pytest.raises(ConfigError, match="mapping"):
         load(path)
+
+
+def test_a_reload_reads_the_file_again(tmp_path: Path) -> None:
+    """Requirement 2: a service picks up an edit without being restarted."""
+    path = write_config(tmp_path, "ping:\n  interval_seconds: 5\n")
+    running = load(path)
+    path.write_text("ping:\n  interval_seconds: 30\n")
+
+    assert reloaded(running, path).ping_interval_seconds == 30
+
+
+def test_a_reload_honours_the_environment_like_load_does(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = write_config(tmp_path, "ping:\n  interval_seconds: 30\n")
+    monkeypatch.setenv(CONFIG_PATH_ENV_VAR, str(path))
+
+    assert reloaded(Config()).ping_interval_seconds == 30
+
+
+def test_a_reload_that_cannot_be_read_keeps_the_running_settings(
+    tmp_path: Path,
+) -> None:
+    """A service that stopped measuring because of a typo has failed worse."""
+    path = write_config(tmp_path, "ping:\n  interval_seconds: 5\n")
+    running = load(path)
+    path.write_text("ping:\n  interval_seconds: nonsense\n")
+
+    assert reloaded(running, path) == running
+
+
+def test_a_reload_that_moves_the_database_is_refused_whole(tmp_path: Path) -> None:
+    """It cannot change under a running service, and half a file is worse.
+
+    Applying the rest of the edit around it would leave the pinger writing to
+    one database while its reboot trigger and staged proposals pointed at
+    another.
+    """
+    path = write_config(tmp_path, f"database:\n  path: {tmp_path / 'a.db'}\n")
+    running = load(path)
+    path.write_text(
+        f"database:\n  path: {tmp_path / 'b.db'}\nping:\n  interval_seconds: 30\n"
+    )
+
+    assert reloaded(running, path) == running
+
+
+def test_a_reload_says_why_it_kept_the_running_settings(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The failure is silent otherwise: the service keeps working, wrongly."""
+    path = write_config(tmp_path, f"database:\n  path: {tmp_path / 'a.db'}\n")
+    running = load(path)
+    path.write_text(f"database:\n  path: {tmp_path / 'b.db'}\n")
+
+    with caplog.at_level(logging.WARNING):
+        reloaded(running, path)
+
+    assert "database.path" in caplog.text

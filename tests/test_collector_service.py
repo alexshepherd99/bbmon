@@ -271,7 +271,7 @@ def restore_signal_handlers() -> Iterator[None]:
     """run_until_stopped installs process-wide handlers; put them back after."""
     previous = {
         number: signal.getsignal(number)
-        for number in (signal.SIGTERM, signal.SIGINT)
+        for number in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP)
     }
     yield
     for number, handler in previous.items():
@@ -316,6 +316,44 @@ def test_a_signal_stops_the_loop_and_still_writes_what_was_buffered(
     assert exit_code == 0
     assert collector.cycles == 1
     assert row_count(database) == 1
+
+
+def test_sighup_comes_back_to_reload_and_still_writes_what_was_buffered(
+    database: Path, restore_signal_handlers: None
+) -> None:
+    """Requirement 2's reload, which the caller answers by rebuilding.
+
+    It has to leave the loop as tidily as a stop does: the caller is about to
+    build a new collector, and anything this one was still holding would
+    otherwise go with it. Buffering is set to an hour, so the row on disk can
+    only have been written on the way out.
+    """
+    reloading = threading.Event()
+    collector = SelfStoppingCollector(signal.SIGHUP)
+
+    exit_code = run_until_stopped(
+        collector, database, flush_interval_seconds=3600, reloading=reloading
+    )
+
+    assert exit_code == 0
+    assert reloading.is_set()
+    assert collector.cycles == 1
+    assert row_count(database) == 1
+
+
+def test_sighup_is_left_alone_for_a_service_that_cannot_reload(
+    database: Path, restore_signal_handlers: None
+) -> None:
+    """Its default terminates the process, which is the honest answer.
+
+    A handler installed here regardless would swallow the signal and leave a
+    service that says it reloaded and did not.
+    """
+    before = signal.getsignal(signal.SIGHUP)
+
+    run_until_stopped(SelfStoppingCollector(signal.SIGTERM), database)
+
+    assert signal.getsignal(signal.SIGHUP) is before
 
 
 def test_a_collector_that_cannot_run_at_all_exits_non_zero(

@@ -19,6 +19,23 @@ Documentation=https://github.com/alexshepherd99/bbmon
 Type=oneshot
 ExecStart=/opt/bbmon/.venv/bin/python -m bbmon.configstore
 
+# What connects an installed configuration to the services running on the old
+# one. Without it a save from the admin page reaches /etc/bbmon/config.yaml and
+# stops there until someone restarts three units by hand, which on a headless
+# Pi is most of the point of having the page at all.
+#
+# try-reload-or-restart: a unit that is not running is left alone rather than
+# started by a configuration change, and each of the three declares ExecReload=
+# so this is a SIGHUP and never a restart. A fixed argv naming three units —
+# nothing here comes from the proposal, which is the rule this whole unit is
+# built on.
+#
+# The leading `-` keeps a failed reload from marking this unit failed: the
+# configuration *was* installed, and saying otherwise would send anyone
+# debugging it to the wrong place. systemctl still writes its own error to the
+# journal.
+ExecStartPost=-/usr/bin/systemctl try-reload-or-restart bbmon-pinger.service bbmon-speedtest.service bbmon-web.service
+
 # Deliberately NOT StateDirectory=bbmon, which every other unit uses. This unit
 # has no User=, so systemd would create and chown /var/lib/bbmon to root:root —
 # leaving every actual bbmon service unable to write its own database. The
