@@ -12,10 +12,11 @@ In development — phase 1. The pinger and speed test record to SQLite and the
 dashboard charts them live (M1, M3, M5), the whole system runs on the Pi under
 systemd via the bootstrap and deploy scripts (M2), and it logs its own
 restarts and reboots itself on a schedule (M4). Gates G1–G3 are cleared on the
-hardware. M6, the admin side, is under way: old pings are purged on a
-schedule, the data downloads as CSV, and the configuration is editable from an
-admin page that can also reboot the Pi. Left in it is SIGHUP reload, then
-gate G5 on the Pi and M7.
+hardware. M6, the admin side, is complete in development: old pings are purged
+on a schedule, the data downloads as CSV, and the configuration is editable
+from an admin page that can also reboot the Pi, with the services re-reading
+it on SIGHUP rather than needing a restart. Next is gate G5 on the Pi, which
+that whole milestone is waiting on, then M7.
 
 ## Deploying to a Pi
 

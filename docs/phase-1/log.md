@@ -1370,3 +1370,94 @@ already refused by the token and the Host allowlist. Recorded here so it is a
 decision rather than an omission.
 
 Next: SIGHUP reload, the last of M6, then G5 on the Pi. 483 tests green.
+
+## 2026-09-01 — SIGHUP reload, and M6 done in development
+
+The last of M6's five commits, and the one that makes the other four worth
+having: until now every service read `config.yaml` once at startup, so a save
+from the admin page reached `/etc`, was read back by the page, and changed
+nothing anyone was running. Requirement 2 has always said "services re-read on
+next cycle or on SIGHUP"; this is that.
+
+### Reload is rebuild, not mutation
+
+The collectors answer the signal by stopping the way they stop for SIGTERM —
+finishing the cycle, writing the buffer — and then the entrypoint builds a new
+collector, reboot scheduler and purge from the new file and runs again. The
+alternative was a setter on each of those four classes, and this is smaller
+and stronger: **the reload path is the startup path**, so there is one way
+settings take effect and no way to end up between two configurations.
+
+What it costs is the state those objects hold. The purge runs again on the
+first cycle after a reload, and a reboot already asked for is asked for again
+— the second of those was visible in the live run, because this development
+machine has been up longer than `reboot.interval_days` and the scheduler
+re-asked the moment it was rebuilt. Both are harmless: a purge with nothing to
+delete is a no-op, and a second trigger write lands on a machine already going
+down, whose reboot unit deletes the trigger before it goes.
+
+The web app cannot do any of that — it is inside `app.run` with a socket bound
+— so it holds its configuration in one object and rebinds one attribute. That
+is also what makes it safe with requests in flight: a request thread reads the
+settings from before the reload or the ones from after, never a mixture.
+
+### Two settings are refused rather than half-honoured
+
+`database.path`, for every service, because a running service already has that
+database open and the reboot trigger and the staged-proposal path both hang
+off it; and `web.host`/`web.port`, because no signal can move a listening
+socket. Both keep the running value and say so in the journal. The rule they
+share is that **a reload that cannot be followed where it points is refused
+whole**, never applied around the part that cannot move — the alternative
+would be a pinger writing to one database while its trigger pointed at
+another.
+
+A file that will not parse is the same answer: keep running on what we have,
+log it. A service that stopped measuring because someone saved a typo has
+failed at the more important of its two jobs.
+
+### The part that closes the loop is a unit file
+
+`ExecReload=/bin/kill -HUP $MAINPID` on the three long-running units is what
+makes `systemctl reload` mean anything, and `bbmon-config.service` now ends
+with `ExecStartPost=-/usr/bin/systemctl try-reload-or-restart` naming those
+three. Without that last line a save still needs an SSH session to take
+effect, which on a headless Pi is most of the point of having the page.
+
+`try-reload-or-restart` leaves a unit that is not running alone rather than
+starting it, and the leading `-` keeps a failed reload from reporting the
+install — which did happen — as the thing that failed.
+
+**Whether a sandboxed root unit can call `systemctl` at all is untested and
+cannot be tested here.** `ProtectSystem=strict` makes the whole hierarchy
+read-only, and whether connecting to systemd's socket survives that is a
+question only the Pi answers. It is a G5 item, with the fallback recorded
+there: a `kill -HUP` against the units' main PIDs needs no socket.
+
+### Tested, then mutated
+
+Nineteen tests, and most of them could be observed red first — the unit-file
+ones failed on a missing `ExecReload=`, and the service ones on a second pass
+that never happened. The rest were written after the code and confirmed by
+breaking it: dropping both guards in `config.reloaded` reddened three tests,
+a `RunningConfig.reload` that swapped nothing reddened three more, a SIGHUP
+handler that set only the stop flag reddened the loop's reload test, and
+installing that handler unconditionally reddened the one asserting a service
+that cannot reload leaves SIGHUP at its default — which matters, because the
+default terminates the process and a handler that swallowed it would leave a
+service claiming to have reloaded when it had not.
+
+### Run, not just tested
+
+Against live services on Crostini, on a scratch database. The web app took a
+new `allowed_hosts` entry and a new `restart_limit` with no restart — a name
+that was refused 400 before the signal was answered 200 after it — kept
+serving on 8081 when the port changed under it, and kept its settings through
+both a moved database and an unparseable file. The pinger went from one target
+at five seconds to two at thirty across a SIGHUP, and wrote every row from
+both sides of it.
+
+**Not run on a Pi.** M6 is now done in development and every remaining part of
+it is a G5 item: the config helper installing as real root, the force-reboot
+button actually rebooting, and this reload actually being sent. 502 tests
+green.
