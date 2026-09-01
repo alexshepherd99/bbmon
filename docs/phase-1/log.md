@@ -1294,3 +1294,79 @@ interpolating module constants only; the ping argv is safe because the hostname
 rule forbids a leading `-`, not because of argv position; the config install is
 TOCTOU-safe on one descriptor; templates autoescape and the front end writes
 only `textContent`. 475 tests green, unchanged.
+
+## 2026-09-01 — The force-reboot button, and the unit that lets it mean anything
+
+M6's fourth commit. The button is one form, and almost all of the thinking in
+it is about what it must *not* be: a call to `RebootAction.reboot()`. That
+would take the machine down and leave the next startup with no request file to
+read, so every press would be filed as a power cut — the one distinction
+requirement 6 exists to draw. It goes through `request_reboot` instead, the
+same function the ping loop's schedule calls, so the reason is on disk before
+the machine is asked to go and the restart list can say which of the two ways
+in produced the row.
+
+**The unit file is the other half.** `bbmon-web.service` now carries
+`BBMON_REBOOT=systemd`; without it the button would answer "requested" and
+nothing would ever happen, which is precisely the silent failure this
+mechanism is otherwise built to avoid. That is the second unit-file change
+waiting on G5's `bootstrap.sh`, and the test that used to assert the web
+service had no reboot action — written at M4 saying "the web app gets it at
+M6, with the button" — was rewritten rather than deleted: there are now two
+services that can reboot and one that still must not.
+
+Nothing gains a privilege by this. The web app writes a file in the state
+directory it can already write to, and `bbmon-reboot.path` is what starts the
+only root unit in the system. What changed is that a compromise of the web app
+can now ask for a reboot — which was already true of anything that could reach
+the LAN-facing form, since the config helper's page and this one are the same
+page.
+
+**`main()` refuses to start when the action cannot work.** `action_from_environment`
+raises if `database.path` has moved the trigger out from under
+`bbmon-reboot.path`, and the web app now propagates that the way the pinger
+does. A dead unit is a worse-looking failure than a button that quietly does
+nothing, and a much better one: the alternative is a Pi that answers every
+press with "requested" for ever.
+
+### Tested red-first, except the two that could not be
+
+Six of the eight new tests failed on a 404 before the route existed. Two
+passed immediately and were confirmed by mutation instead:
+
+- *a press without a token is refused* passed because the token check was
+  registered app-wide at the config form, deliberately, so this route would be
+  covered on arrival rather than by remembering to decorate it. Excusing that
+  test would have left the claim untested, so the guard was made to skip
+  `/admin/reboot` — red, `assert 403 == 302`.
+- *a refused reboot leaves no request behind* passed vacuously, since nothing
+  had written a request file yet. Dropping `_clear_request` from
+  `request_reboot`'s failure path turned it red, which is the behaviour that
+  matters: a request left lying around would make the next real power cut look
+  like this press.
+
+### Run, not just tested
+
+Against the live service on Crostini. The button staged a request carrying the
+admin page's reason and the page came back saying a reboot was asked for, not
+that one had happened; a POST with no token was refused 403; the page answers
+by name as well as by address. With `BBMON_REBOOT=systemd` against the
+development database the service refused to start and said which path
+`bbmon-reboot.path` watches and which one it would have written.
+
+**Not run on a Pi, and the reboot itself has never happened from here.** In
+development the action is the no-op, so what is untested anywhere is the web
+service writing `/var/lib/bbmon/reboot-now` and systemd noticing — the
+pinger's writes prove the watcher, not this writer. It is a G5 item.
+
+### A confirmation step was considered and not built
+
+Requirement 8 asks for a button, and the plan's scope discipline is explicit
+that "it's only small" is not an exception. The case against it is also
+substantive: this machine reboots itself every three days by design, so a
+stray tap costs a minute of collection and an honest restart row, and the two
+things worth defending against — a forged press and a rebound origin — are
+already refused by the token and the Host allowlist. Recorded here so it is a
+decision rather than an omission.
+
+Next: SIGHUP reload, the last of M6, then G5 on the Pi. 483 tests green.

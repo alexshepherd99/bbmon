@@ -14,7 +14,7 @@ systemd via the bootstrap and deploy scripts (M2), and it logs its own
 restarts and reboots itself on a schedule (M4). Gates G1–G3 are cleared on the
 hardware. M6, the admin side, is under way: old pings are purged on a
 schedule, the data downloads as CSV, and the configuration is editable from an
-admin page. Left in it are the force-reboot button and SIGHUP reload, then
+admin page that can also reboot the Pi. Left in it is SIGHUP reload, then
 gate G5 on the Pi and M7.
 
 ## Deploying to a Pi
