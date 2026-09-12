@@ -1791,3 +1791,12 @@ asks — the original run was muddied by an accidental repeat.
   reboots at G5 were the web service, under `NoNewPrivileges=yes`, writing the
   trigger, and the scheduled reboots of 2026-08-22 and 2026-08-25 were the
   pinger doing the same.
+- **A pulled power cable is an unexpected restart.** The Pi came back once,
+  every unit active, no job stuck, no ordering cycle in the journal, no
+  trigger or proposal left behind. The 13th row reads `expected = false`, "no
+  reboot was requested before the machine went down", and
+  `PRAGMA integrity_check`, run as `bbmon`, returned `ok`.
+
+M7 is done. All that is left of G4, and so of phase 1, is watching the
+retention purge's first run that actually deletes anything, due around
+2026-09-18.

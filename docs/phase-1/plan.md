@@ -35,7 +35,7 @@ Development happens on the Chromebook (Crostini); the Pi is a deployment and ver
 
 **M6 — Admin page.** *(dev + gate G5)* **Done (dev) 2026-09-01; verified on the Pi at G5, 2026-09-12.** Config form with server-side validation and atomic write-back, SIGHUP reload, force-reboot button, CSV export of ping and speedtest data over a selectable date range, and the daily ping-retention purge. *Depends on: M5.*
 
-**M7 — Operability and release.** *(dev + gate G4)* Log rotation — **met by having no log files**, decided 2026-09-12: every service logs to stderr, journald holds it and caps its own size, and `tests/test_logging.py` keeps any service from gaining a file of its own. The security checklist verified end to end, low-spec behaviour measured on the Pi for the first time, and `update.sh` proven from a clean pull. *Depends on: everything above.*
+**M7 — Operability and release.** *(dev + gate G4)* **Done 2026-09-12.** Log rotation — **met by having no log files**, decided 2026-09-12: every service logs to stderr, journald holds it and caps its own size, and `tests/test_logging.py` keeps any service from gaining a file of its own. The security checklist verified end to end, low-spec behaviour measured on the Pi for the first time, and `update.sh` proven from a clean pull. *Depends on: everything above.*
 
 ## Pi gates
 
@@ -83,9 +83,7 @@ M5 added two items that cannot be settled off the Pi, both now closed:
 
 And two items this gate gained on 2026-08-19:
 
-- **Re-run G3's reboot checklist end to end, cleanly.** The original run was muddled: a script was run again by accident partway through, which for a while looked like the defect and was not it. Every item has since passed against the fixed units, so this is confirmation rather than an open question — but it is the one gate whose failure mode needs a keyboard at the machine, so it deserves an unambiguous pass. **Run one command at a time and confirm each before starting the next**, rather than queueing them; the reboots are fast enough that an accidental repeat lands inside the previous one and the evidence then cannot be untangled — the journal does not survive a reboot to help.
-
-  **Two of these items no longer need staging: the machine did them by itself.** Left running from 2026-08-19 to 2026-08-28, it took its scheduled reboot twice — 2026-08-22 and 2026-08-25 — each recorded `expected = true` with the scheduled reason, each followed by the machine coming back and resuming collection. That is the scheduled-reboot path and the restart row proven unsupervised, which is a stronger claim than a staged run. What still needs deliberate action is everything that cannot happen on its own: the loop guard, the pulled-power `expected = false` case, the single-service restart adding no row, and the reboot from inside the sandbox under `NoNewPrivileges=yes`.
+- **G3's reboot checklist re-run cleanly, 2026-09-12**, one command at a time with each confirmed before the next. The loop guard, the pulled-power `expected = false` case and the single-service restart adding no row were staged and passed; the scheduled reboots of 2026-08-22 and 2026-08-25 and the force reboots at G5 had already proven the rest unsupervised. See `log.md`.
 - **The volatile journal stays for phase 1.** Decided 2026-09-12. Raspberry Pi OS ships `/usr/lib/systemd/journald.conf.d/40-rpi-volatile-storage.conf` with `Storage=volatile`, so **no log survives any reboot**, and after an unexpected restart the `restarts` row is the only evidence that anything happened. Accepted knowingly: the default suits an SD card, and a bounded persistent journal remains in `BACKLOG.md`.
 
 ## Decisions taken with this plan
