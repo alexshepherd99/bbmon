@@ -1568,3 +1568,93 @@ skip, working as designed.
 
 The signal gap was not reproduced live: the window is too narrow to hit by
 hand. Not run on a Pi. 515 tests green.
+
+## 2026-09-12 — G5 on the Pi: the helper could touch none of bbmon's files
+
+G5 found what it was there to find. The config helper is the one part of M6
+that development cannot run — root, a real `/etc`, an empty bounding set — and
+on first contact with all three it failed, closed.
+
+### Deployed
+
+With `deploy.sh` rather than `update.sh`: the Pi's checkout carries twelve
+files that earlier deploys rsynced over it, and a `git pull` into that is
+untested. G4's `update.sh` item should start from a clean checkout. Then
+`bootstrap.sh`, for the two new units.
+
+The Pi had been switched off from 2026-08-30 21:00 UTC until 09:28 this
+morning. That is the twelve-day hole in the ping data, and the unexpected
+restart row that ends it is correct: nothing asked for that reboot.
+
+### The defect
+
+Four hand-staged proposals the helper must refuse. None was consumed, and two
+were refused for the wrong reason:
+
+- **Deleting any proposal:** `Permission denied`. Deleting a file writes its
+  directory, `/var/lib/bbmon` is `bbmon`'s and `0755`, and root without
+  `CAP_DAC_OVERRIDE` is held to that like anyone else.
+- **Installing a valid one:** giving the new file `root:bbmon` failed with
+  `Operation not permitted` — no `CAP_CHOWN`. That step runs before
+  validation, which is where the two invalid proposals died instead.
+- **Reading one, hidden by the test itself:** the web app stages at `0640`,
+  which root without `CAP_DAC_READ_SEARCH` cannot open. The hand-staged files
+  were `0644`.
+
+So no save from the admin page could ever have been installed. Nothing leaked
+— the symlink case read nothing, and `/etc/bbmon/config.yaml` never changed.
+The unit tests could not see any of it: as an ordinary user, giving a file
+your own ids always succeeds.
+
+### The fix
+
+Two ways out: grant `CAP_CHOWN` and `CAP_DAC_OVERRIDE`, or give the helper its
+access through the `bbmon` group. The first is one line, but
+`CAP_DAC_OVERRIDE` lets the root helper past every file permission on the
+machine. Chosen: `Group=bbmon` on the helper, and `StateDirectoryMode=0775` on
+the four units that take the directory and in `bootstrap.sh`. The group reads
+the `0640` proposal, writes the directory, and lets root give its own file a
+group it is in. The group's only other member is `bbmon`, so nobody else gains
+anything.
+
+Proven first on Crostini, with transient units under the same empty bounding
+set and `NoNewPrivileges=yes`. Root alone: all three refused, exactly as on
+the Pi. With the group: read and group change allowed, delete refused. With
+the group and `0775`: all three allowed. The namespace directives were left
+off that run — a first attempt with `PrivateTmp=yes` failed at setup, because
+that also gives the unit its own `/var/tmp`, where the test files were — and
+namespaces play no part in permission checks.
+
+Two unit tests, observed red (`StateDirectoryMode` absent on all four units,
+`Group` absent on the helper), then green. 520 tests.
+
+### Verified on the Pi, after the fix
+
+- **All four refusals consumed**, each for its own reason: the symlink by
+  `O_NOFOLLOW`, root ownership by uid, `8.8.8.8; reboot` by the hostname rule,
+  and a `database.path` in `/var/tmp` by the reboot-trigger rule. One helper
+  run per proposal — its own delete does not start it again, now seen on
+  systemd 257 as well as 252 — and the watcher stayed active through four
+  failures.
+- **A save from the admin page installed.** The proposal was consumed, the
+  file stayed `root:bbmon 0640`, and all three services reloaded rather than
+  restarted; the speed test service said when its next test was due and ran
+  none. The save added the Pi's name to `web.allowed_hosts`, which the Host
+  allowlist had made necessary: by name the dashboard had answered 400 since
+  the deploy, by address 200. Both now answer 200.
+- **The reload from inside the helper's sandbox works on systemd 257.**
+- **Force reboot, twice.** Both boots came up with every unit in its expected
+  state, no job stuck and no ordering cycle in the journal, no trigger or
+  proposal left behind, and one expected restart row each reading "force
+  reboot requested from the admin page". The Pi came back once each time.
+- `/var/lib/bbmon` is `bbmon:bbmon 0775` after the helper has run.
+- **The admin page is usable on a phone**: the number boxes do not zoom the
+  page, the target list is typeable, and both links are fingertip-sized.
+
+### Also found
+
+A helper run with nothing pending still reloads all three services, so
+anything that deletes the staged file from outside — here, the test script's
+cleanup — sends a pointless reload. Harmless, and in `BACKLOG.md`.
+
+G5 is cleared. What remains of phase 1 is M7 and G4.
