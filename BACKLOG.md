@@ -14,6 +14,19 @@ Ordered by suggested priority (highest value / most natural extension first). Ca
 6. **GPIO-based sensor collectors** — the original motivating "future test type" example; plugs into the Phase 1 collector interface once specific sensors are chosen.
 7. **Concurrent-speedtest chart marker** (minor UI polish) — mark on the ping latency chart when a speed test was running concurrently, since it causes a visible (expected) latency bump that would otherwise look unexplained.
 
+## Dashboard
+
+- **Rework the dashboard layout for a desktop screen.** Feedback on M5's page, 2026-08-17; moved out of phase 1 on 2026-09-12. Three things asked for:
+  - **Fit on one screen at 1920×1080 with no scrolling.**
+  - **The two ping charts side by side** — the live 2-hour line chart and the hourly box plot.
+  - **The restart panel moved up beside the speed test readings.**
+
+  The current wide layout is one full-width row each for the readings, the live chart and the restarts, with the box plot and speed test history paired. So this is a rearrangement into roughly: readings | restarts, then live chart | box plot.
+
+  Two things need deciding when it is picked up, because the request does not settle them. **Where the speed test history chart goes** — it is the panel with no place left in the arrangement above, and putting it on a third row is what the no-scrolling constraint will fight. And **how the chart heights are derived**: they are `42vh` with a `min-height: 240px` floor today, and two rows of charts at that height plus a header, a readings panel, a restart table and a footer do not fit in 1080px. The floor in particular will override any vh figure small enough to fit.
+
+  Note this constrains **wide viewports only**. Requirement 7's mobile layout still has to stack and scroll, so "no scrolling" is a `min-width` rule, not a property of the page.
+
 ## Security hardening
 
 Deferred from phase 1 on 2026-08-05 as hardening rather than hole-closing — each raises the cost of an attack that the phase-1 measures already block outright. The measures that *do* close holes (CSRF tokens, Host-header allowlist, key-only SSH, non-root service user, systemd sandboxing, injection-safe coding) are in phase 1 — see the "Security posture" section of `docs/phase-1/requirements.md`'s sibling `plan.md`.
