@@ -1800,3 +1800,40 @@ asks — the original run was muddied by an accidental repeat.
 M7 is done. All that is left of G4, and so of phase 1, is watching the
 retention purge's first run that actually deletes anything, due around
 2026-09-18.
+
+## 2026-09-12 — Security review of the whole repository, at G4
+
+Every blob in history and every commit message, at `9882ba1`, as its own
+session. Nothing new is exposed.
+
+The pattern scan found no keys, fingerprints, tokens or MAC addresses. Its IP
+literals are public resolvers, loopback and the wildcard bind, the RFC 5737
+and RFC 3849 documentation ranges, the Ookla version string, and the retired
+example in `deploy.sh`. The one real address is the LAN address already
+decided on 2026-08-13: in history only, deliberately left there.
+
+The semantic pass went further than reading, and is the part worth keeping:
+**every value in the local notes, `~/.ssh/config` and the development
+database was searched for in history, with counts printed and never the
+values.** Anything that matched was by construction already public, so it could
+be listed safely. All of it was generic procedure text. What a stranger learns
+from the prose is the hardware, the time zone and roughly when gates were run
+at home. The city in the speed test fixtures is generic by decision.
+
+Controls were asked of the systems rather than read from config: secret
+scanning and push protection on with no alerts; branch protection blocking
+force-push and deletion for administrators too; one collaborator; the ignore
+rules checked with `git check-ignore`; no unreachable objects and no rewrite
+bundle or replacements file left on disk. Every commit since the rewrite was
+made by this clone. The two before it that were not are the GitHub web-UI
+commits of 2026-07-26. Two-factor authentication on the account was confirmed
+by its owner, not by the API. The classic full-scope token stays the accepted
+deviation already recorded.
+
+One gap closed: only `*.local.md` was ignored, so local notes in any other
+format would have been committed by the next `git add -A`. Now `*.local` and
+`*.local.*`, in `eb88ca1`.
+
+GitHub's traffic figures show 51 unique cloners and one unique page viewer in
+the last fourteen days. That confirms what the 2026-08-13 decision assumed:
+what is pushed is held by parties nobody can reach.
