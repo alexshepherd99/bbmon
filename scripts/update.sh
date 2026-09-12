@@ -67,6 +67,51 @@ discard_deploy_artifacts() {
   note "restored to committed state"
 }
 
+# deploy.sh also copies files that are new in the tree it runs from, so the
+# checkout gains untracked copies of them. Once they are committed, the merge
+# that brings them refuses to overwrite them. Only files the incoming commit
+# tracks are removed — the merge writes each straight back — and like the
+# discard above, never silently.
+remove_untracked_in_the_way() {
+  local owner="$1" path in_the_way=()
+  while IFS= read -r -d '' path; do
+    if sudo -u "$owner" git cat-file -e "FETCH_HEAD:$path" 2>/dev/null; then
+      in_the_way+=("$path")
+    fi
+  done < <(sudo -u "$owner" git ls-files -z --others --exclude-standard)
+  [[ ${#in_the_way[@]} -gt 0 ]] || return 0
+
+  log "Removing untracked copies of files this update brings"
+  for path in "${in_the_way[@]}"; do note "$path"; done
+  sudo -u "$owner" rm -f -- "${in_the_way[@]}"
+}
+
+# Brings the checkout to the tip of origin's branch, or leaves it untouched.
+#
+# Everything that can fail is tried before anything is thrown away. Discarding
+# first and failing second leaves the checkout on its old commit with newer
+# files beside it — code no commit ever contained, which runs at the next
+# restart. Found at G4, where the pull refused four modules of M6.
+update_checkout() {
+  local owner="$1" branch="$2"
+
+  log "Fetching $branch from origin"
+  # Remote and branch are named explicitly rather than relying on this clone
+  # having upstream tracking configured. That config is easy to lose — a
+  # history rewrite removes the remote, and re-adding it does not restore the
+  # tracking — and a bare `git pull` then fails with advice about setting an
+  # upstream, which reads like a git problem rather than a deploy one.
+  sudo -u "$owner" git fetch origin "$branch" \
+    || die "could not fetch $branch from origin — nothing was changed"
+  sudo -u "$owner" git merge-base --is-ancestor HEAD FETCH_HEAD \
+    || die "origin's $branch does not continue from this checkout's commit, so
+    it cannot be fast-forwarded — nothing was changed"
+
+  discard_deploy_artifacts "$owner"
+  remove_untracked_in_the_way "$owner"
+  sudo -u "$owner" git merge --ff-only FETCH_HEAD
+}
+
 # Records what is now deployed, for the dashboard footer.
 #
 # Written after the pull rather than after the restart: the files on disk are
@@ -90,19 +135,11 @@ main() {
   local owner
   owner="$(stat -c '%U' "$INSTALL_DIR")"
 
-  discard_deploy_artifacts "$owner"
-
   local before after branch
   before="$(sudo -u "$owner" git rev-parse HEAD)"
   branch="$(sudo -u "$owner" git rev-parse --abbrev-ref HEAD)"
 
-  log "Pulling $branch from origin"
-  # Remote and branch are named explicitly rather than relying on this clone
-  # having upstream tracking configured. That config is easy to lose — a
-  # history rewrite removes the remote, and re-adding it does not restore the
-  # tracking — and a bare `git pull` then fails with advice about setting an
-  # upstream, which reads like a git problem rather than a deploy one.
-  sudo -u "$owner" git pull --ff-only origin "$branch"
+  update_checkout "$owner" "$branch"
   after="$(sudo -u "$owner" git rev-parse HEAD)"
 
   write_build_stamp "$(sudo -u "$owner" git rev-parse --short HEAD)"
