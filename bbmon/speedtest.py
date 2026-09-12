@@ -6,7 +6,8 @@ is a thin wrapper around this entrypoint.
 Requirement 5 asks for a test on startup and then every
 ``speedtest.interval_hours``. The shared loop in :mod:`bbmon.service` collects
 before it sleeps, so the startup run is the first cycle rather than a special
-case.
+case. A reload is not a startup, and does not test at once — see
+:class:`SpeedtestSchedule`.
 
 Unlike the pinger, this service does not buffer. Buffering exists to spare the
 SD card thousands of small ping writes; one row every few hours is not worth
@@ -17,6 +18,8 @@ from __future__ import annotations
 
 import logging
 import sys
+import time
+from collections.abc import Callable
 
 from bbmon import db, reboot
 from bbmon.collectors.speedtest import SpeedtestCollector
@@ -31,6 +34,33 @@ logger = logging.getLogger(__name__)
 #: ``TIMEOUT_SECONDS``); five minutes covers the slowest run plus the time the
 #: machine takes to go down, without skipping tests that would have finished.
 SKIP_BEFORE_REBOOT_SECONDS = 300
+
+
+class SpeedtestSchedule:
+    """When the last speed test cycle ended, kept across reloads.
+
+    Requirement 5 asks for a test on startup and every interval after it. A
+    reload is not a startup: every save from the admin page sends one, and a
+    rebuilt loop tests before it sleeps, so without this, changing any setting
+    ran a speed test. The first test after a reload instead waits out whatever
+    remains of the interval, measured with the interval as it now reads.
+    """
+
+    def __init__(self, monotonic: Callable[[], float] = time.monotonic) -> None:
+        """:param monotonic: Injection point for elapsed-time measurement."""
+        self._monotonic = monotonic
+        self._last_ended: float | None = None
+
+    def cycle_ended(self) -> None:
+        """Note that a cycle — a test, or one skipped for a reboot — just ended."""
+        self._last_ended = self._monotonic()
+
+    def seconds_until_due(self, interval_seconds: float) -> float:
+        """How long the next test should wait; ``0`` before any has run."""
+        if self._last_ended is None:
+            return 0.0
+        elapsed = self._monotonic() - self._last_ended
+        return max(0.0, interval_seconds - elapsed)
 
 
 def main() -> int:
@@ -51,8 +81,9 @@ def main() -> int:
     # reload replaces it rather than editing it. A test running when the signal
     # arrives finishes and is written before this comes back.
     requests = ServiceRequests()
+    schedule = SpeedtestSchedule()
     while True:
-        code = _run(config, requests)
+        code = _run(config, requests, schedule)
         if not requests.reload.is_set():
             return code
 
@@ -60,7 +91,9 @@ def main() -> int:
         config = reloaded(config)
 
 
-def _run(config: Config, requests: ServiceRequests) -> int:
+def _run(
+    config: Config, requests: ServiceRequests, schedule: SpeedtestSchedule
+) -> int:
     """Run the speed test on one configuration, until stopped or reloaded."""
     collector = SpeedtestCollector(
         interval_hours=config.speedtest_interval_hours,
@@ -73,17 +106,28 @@ def _run(config: Config, requests: ServiceRequests) -> int:
         ),
     )
 
-    logger.info(
-        "Running a speed test now and every %dh, writing to %s",
-        config.speedtest_interval_hours,
-        config.database_path,
-    )
+    wait = schedule.seconds_until_due(collector.interval_seconds)
+    if wait > 0:
+        logger.info(
+            "Next speed test in %dm, then every %dh, writing to %s",
+            wait // 60,
+            config.speedtest_interval_hours,
+            config.database_path,
+        )
+    else:
+        logger.info(
+            "Running a speed test now and every %dh, writing to %s",
+            config.speedtest_interval_hours,
+            config.database_path,
+        )
 
     return run_until_stopped(
         collector,
         config.database_path,
         flush_interval_seconds=FLUSH_EVERY_CYCLE,
+        between_cycles=schedule.cycle_ended,
         requests=requests,
+        first_wait_seconds=wait,
     )
 
 

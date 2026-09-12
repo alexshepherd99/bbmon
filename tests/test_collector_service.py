@@ -266,6 +266,41 @@ def test_the_loop_sleeps_for_the_collector_interval(database: Path) -> None:
     assert clock.seconds == 21
 
 
+def test_a_first_wait_delays_the_first_cycle(database: Path) -> None:
+    """What a reloaded speed test uses: its first test waits out the interval
+    it was part way through, rather than running the moment a setting is saved.
+    """
+    clock = FakeClock()
+    cycles_at: list[float] = []
+
+    CollectorService(
+        collector=FakeCollector(interval_seconds=5),
+        database_path=database,
+        flush_interval_seconds=60,
+        sleep=clock.sleep,
+        monotonic=clock,
+        between_cycles=lambda: cycles_at.append(clock.seconds),
+    ).run(stop_after(1), first_wait_seconds=30)
+
+    assert cycles_at == [30]
+
+
+def test_a_stop_during_the_first_wait_runs_no_cycle(database: Path) -> None:
+    """A wait measured in hours must not end in a test nobody still wants."""
+    stopping = threading.Event()
+    collector = FakeCollector(interval_seconds=5)
+
+    CollectorService(
+        collector=collector,
+        database_path=database,
+        flush_interval_seconds=3600,
+        sleep=lambda _seconds: stopping.set(),
+        monotonic=FakeClock(),
+    ).run(should_continue=lambda: not stopping.is_set(), first_wait_seconds=30)
+
+    assert collector.cycles == 0
+
+
 @pytest.fixture
 def restore_signal_handlers() -> Iterator[None]:
     """run_until_stopped installs process-wide handlers; put them back after."""

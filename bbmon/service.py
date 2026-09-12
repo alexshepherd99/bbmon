@@ -85,6 +85,7 @@ class CollectorService:
         self,
         should_continue: Callable[[], bool] = lambda: True,
         flush_on_exit: bool = True,
+        first_wait_seconds: float = 0.0,
     ) -> None:
         """Collect on the configured interval until ``should_continue`` is false.
 
@@ -92,6 +93,10 @@ class CollectorService:
             that lets this loop be driven by a test rather than by a signal.
         :param flush_on_exit: Write whatever is still buffered on the way out,
             so a clean shutdown loses nothing.
+        :param first_wait_seconds: How long to wait before the first cycle.
+            Zero for a service that has just started, which measures straight
+            away; a reloaded speed test passes what remains of the interval it
+            was part way through.
         """
         # Backdated by a full interval so the first cycle's results are written
         # straight away. Requirement 4's buffering exists to spare the SD card
@@ -102,6 +107,8 @@ class CollectorService:
         last_flush = self._monotonic() - self._flush_interval_seconds
 
         try:
+            if first_wait_seconds > 0:
+                self._sleep(first_wait_seconds)
             while should_continue():
                 self._collect_once()
                 if self._monotonic() - last_flush >= self._flush_interval_seconds:
@@ -177,6 +184,7 @@ def run_until_stopped(
     flush_interval_seconds: int = FLUSH_INTERVAL_SECONDS,
     between_cycles: Callable[[], None] = lambda: None,
     requests: ServiceRequests | None = None,
+    first_wait_seconds: float = 0.0,
 ) -> int:
     """Run ``collector`` until the service is asked to stop, and report an exit code.
 
@@ -191,6 +199,8 @@ def run_until_stopped(
         which terminates the process: a service that cannot reload should not
         claim to, and systemd only sends this to a unit declaring
         ``ExecReload=``.
+    :param first_wait_seconds: How long the first cycle waits; see
+        :meth:`CollectorService.run`. A stop or reload ends the wait early.
     :return: ``0`` after a clean stop, ``1`` if the collector cannot run at all.
         A reload returns ``0`` too — it is ``requests``, not the exit code,
         that says which of the two happened.
@@ -241,7 +251,10 @@ def run_until_stopped(
     )
 
     try:
-        service.run(should_continue=lambda: not wake.is_set())
+        service.run(
+            should_continue=lambda: not wake.is_set(),
+            first_wait_seconds=first_wait_seconds,
+        )
     except CollectorError:
         logger.exception("The %s collector cannot run", collector.name)
         return 1
