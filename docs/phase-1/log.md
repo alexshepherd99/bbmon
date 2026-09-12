@@ -1507,3 +1507,64 @@ filesystem, a unit, or a subprocess.
 
 M6 is now complete in development and everything remaining in it is a G5 item.
 507 tests green.
+
+## 2026-09-12 — A review of the last three code commits, and its four fixes
+
+The review G5 asks for ran on 2026-08-31, a day before the force-reboot button
+and the SIGHUP reload — the two changes that most needed it. So those commits
+and the CSV escape were reviewed on their own, ahead of the Pi.
+
+**The force-reboot button is sound.** It sits behind the CSRF token and the
+Host allowlist like every POST, writes the reason before the trigger, and takes
+the reason back if the trigger cannot be written.
+
+**Every save from the admin page ran a speed test.** A reload rebuilds the speed
+test service, and the loop tests before it sleeps, so changing any setting
+started a test half a minute later, put its latency bump on the dashboard and
+reset the interval. Fixed: the first test after a reload waits out what remains
+of the interval, measured with the interval as it now reads. Startup still
+tests at once.
+
+**A signal between two runs was lost.** A reloading service calls
+`run_until_stopped` once per configuration, and between calls the old handlers
+were still installed, setting an event nothing read any more. The review found
+this for SIGHUP; fixing it showed SIGTERM falls in the same gap, and that one is
+worse — the next run carried on until systemd's stop timeout killed it and its
+buffer. The window is milliseconds. Fixed: the requests live in one
+`ServiceRequests` for the life of the process, and each run starts by honouring
+any already made.
+
+**The G5 fallback did not work.** Tested with transient units on the
+development machine's systemd 252, under the helper's exact sandbox:
+`systemctl try-reload-or-restart` reloaded a target without restarting it, but
+`kill -HUP` was refused with `Operation not permitted`. The empty
+`CapabilityBoundingSet=` removes `CAP_KILL`, which root needs to signal another
+user's process. `plan.md` now says so. Also tested: the helper deleting its own
+proposal does not start it again, so one save sends one reload.
+
+**The CSV escape gained tab and carriage return**, both on OWASP's list, and
+lost a claim that Excel and Sheets hide the apostrophe, which had never been
+checked.
+
+### Tested
+
+Every behavioural test observed red first: the gap for both signals (the second
+run collected a cycle it should not have), the reload wait (0.0 against 21600),
+and the two CSV characters. The three that could not be — the loop's new first
+wait, a stop during it, and the schedule's arithmetic — were confirmed by
+mutation: dropping the wait turns both loop tests red, and waiting the whole
+interval rather than the remainder turns the schedule test red. Dropping the
+gap check turns both gap tests red.
+
+### Run, not just tested
+
+The speed test service ran live on Crostini, with a stub `speedtest` on the
+path since the Chromebook has no Ookla binary. It tested once at startup;
+changing the interval to 12h and sending SIGHUP produced "Next speed test in
+719m, then every 12h" and no second test; SIGTERM during that wait stopped it
+in 0.02s. A first attempt skipped its startup test because the container had
+been up longer than the default three-day reboot interval — requirement 5's
+skip, working as designed.
+
+The signal gap was not reproduced live: the window is too narrow to hit by
+hand. Not run on a Pi. 515 tests green.
