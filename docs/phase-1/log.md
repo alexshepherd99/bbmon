@@ -1658,3 +1658,32 @@ anything that deletes the staged file from outside — here, the test script's
 cleanup — sends a pointless reload. Harmless, and in `BACKLOG.md`.
 
 G5 is cleared. What remains of phase 1 is M7 and G4.
+
+## 2026-09-12 — Log rotation, met by having no log files
+
+The desktop dashboard layout moved to `BACKLOG.md` first, by agreement: it was
+feedback on M5 rather than a requirement, and phase 1 closes without it.
+
+Requirement 10 asks for rotation "or they will grow unbounded", and assumes
+the services keep log files of their own. They do not. Every service logs
+through `basicConfig` with no filename, so to stderr; systemd hands that to
+journald, and nothing of bbmon's is written anywhere else. Checked on the Pi:
+
+- No syslog daemon is installed, so journald's `ForwardToSyslog=yes` reaches
+  nothing and there is no `/var/log/syslog` to grow.
+- Nothing of bbmon's is in `/var/log` or `/etc/logrotate.d`.
+- The journal is volatile, and journald reports it at 2.2M against a cap of
+  18.1M — its default of a tenth of `/run`.
+
+So the requirement is met by what already exists, and the work was holding it
+in place: the first log file anyone adds is the one nothing rotates.
+`tests/test_logging.py` refuses a unit that sends its output anywhere but the
+journal, or takes a `LogsDirectory=`, and a module that attaches a file
+handler. Neither half can fail before something breaks it, so both were
+proven by mutation: `StandardOutput=append:/var/log/bbmon-pinger.log` in the
+pinger's unit, and `filename=` in the pinger's `basicConfig`, each went red and
+were restored. 548 tests.
+
+If the volatile journal is ever made persistent — the open G4 decision — the
+cap becomes `SystemMaxUse=`, whose default is a tenth of the root filesystem:
+around 2.5G on this card, which would want setting explicitly.
