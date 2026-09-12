@@ -105,6 +105,18 @@ def test_the_database_directory_is_the_only_writable_path(name: str) -> None:
     )
 
 
+@pytest.mark.parametrize("name", ALL_UNITS)
+def test_the_database_directory_is_group_writable(name: str) -> None:
+    """bbmon-config.service consumes proposals as root in the bbmon group.
+
+    With an empty bounding set root has no CAP_DAC_OVERRIDE, so deleting a file
+    from /var/lib/bbmon needs write access to the directory through its group.
+    Every unit that takes the directory must agree on the mode, or each start
+    would reset it to whichever ran last. Found on the Pi at G5, 2026-09-12.
+    """
+    assert read_unit(name)["Service"].get("StateDirectoryMode") == "0775"
+
+
 @pytest.mark.parametrize("name", LONG_RUNNING_UNITS)
 def test_long_running_units_restart_on_failure(name: str) -> None:
     """Requirement 10: a crashed collector recovers on its own."""
@@ -376,6 +388,20 @@ def test_the_config_installer_is_sandboxed_despite_running_as_root() -> None:
     assert service.get("ProtectSystem") == "strict"
     assert service.get("ProtectHome") == "yes"
     assert service.get("CapabilityBoundingSet") == ""
+
+
+def test_the_config_installer_runs_as_root_in_the_bbmon_group() -> None:
+    """Group membership is its only access to bbmon's files; it has no capability.
+
+    Without CAP_DAC_OVERRIDE and CAP_CHOWN, root can neither read a proposal the
+    web app staged at 0640 nor give the installed file its bbmon group — both
+    refused on the Pi at G5, 2026-09-12. A member of the group can do both, and
+    nothing a capability would allow. User= stays unset: the destination is
+    root-owned and must stay that way.
+    """
+    service = read_unit(CONFIG_UNIT)["Service"]
+    assert "User" not in service
+    assert service.get("Group") == "bbmon"
 
 
 def test_the_config_installer_writes_only_the_two_directories_it_must() -> None:

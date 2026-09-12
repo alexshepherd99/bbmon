@@ -128,7 +128,9 @@ create_service_user() {
     note "created as a system user with no login shell"
   fi
 
-  install -d -o "$SERVICE_USER" -g "$SERVICE_USER" -m 0755 "$STATE_DIR"
+  # 0775, matching StateDirectoryMode= in the units: bbmon-config.service
+  # deletes proposals here as root in the bbmon group, with no capability.
+  install -d -o "$SERVICE_USER" -g "$SERVICE_USER" -m 0775 "$STATE_DIR"
 }
 
 install_code() {

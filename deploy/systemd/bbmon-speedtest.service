@@ -25,6 +25,8 @@ RestartSec=5
 TimeoutStopSec=120
 
 StateDirectory=bbmon
+# Group-writable for bbmon-config.service — see bbmon-init.service.
+StateDirectoryMode=0775
 
 NoNewPrivileges=yes
 ProtectSystem=strict

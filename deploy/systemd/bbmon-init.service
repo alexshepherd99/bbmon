@@ -27,6 +27,11 @@ ExecStart=/opt/bbmon/.venv/bin/python -m bbmon.init
 # start and implicitly makes it the one writable path under ProtectSystem;
 # a separate ReadWritePaths= would be the same grant written twice.
 StateDirectory=bbmon
+# Group-writable so bbmon-config.service, which runs as root in the bbmon group
+# with no capabilities, can delete a proposal it has ruled on. The bbmon user is
+# the group's only member, so nobody else gains anything. Every unit that takes
+# the directory states the same mode, or each start would reset it.
+StateDirectoryMode=0775
 
 NoNewPrivileges=yes
 ProtectSystem=strict

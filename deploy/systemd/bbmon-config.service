@@ -19,6 +19,17 @@ Documentation=https://github.com/alexshepherd99/bbmon
 Type=oneshot
 ExecStart=/opt/bbmon/.venv/bin/python -m bbmon.configstore
 
+# Root, but in the bbmon group, and that group is its only access to bbmon's
+# files. The empty bounding set below removes CAP_DAC_OVERRIDE and CAP_CHOWN,
+# so plain root here could not read a proposal the web app staged at 0640,
+# delete it from /var/lib/bbmon, or give the installed file its bbmon group —
+# all three refused on the Pi at G5, 2026-09-12. As a member of the group it
+# can: the proposal is group-readable, the state directory is group-writable
+# (StateDirectoryMode=0775 on every unit that takes it), and an owner may give
+# a file any group it belongs to. User= stays unset: the destination is
+# root-owned and must stay that way.
+Group=bbmon
+
 # What connects an installed configuration to the services running on the old
 # one. Without it a save from the admin page reaches /etc/bbmon/config.yaml and
 # stops there until someone restarts three units by hand, which on a headless
@@ -37,15 +48,15 @@ ExecStart=/opt/bbmon/.venv/bin/python -m bbmon.configstore
 ExecStartPost=-/usr/bin/systemctl try-reload-or-restart bbmon-pinger.service bbmon-speedtest.service bbmon-web.service
 
 # Deliberately NOT StateDirectory=bbmon, which every other unit uses. This unit
-# has no User=, so systemd would create and chown /var/lib/bbmon to root:root —
-# leaving every actual bbmon service unable to write its own database. The
-# grant it needs is a plain read-write path.
+# has no User=, so systemd would chown /var/lib/bbmon to root — leaving every
+# actual bbmon service unable to write its own database. The grant it needs is
+# a plain read-write path.
 ReadWritePaths=/etc/bbmon /var/lib/bbmon
 
 NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=yes
 PrivateTmp=yes
-# Writing a file needs no capability. Root here is about file ownership, not
-# about anything the kernel gates.
+# No capability at all. Root here is about owning the file it installs; the
+# bbmon group covers everything else it touches — see Group= above.
 CapabilityBoundingSet=
