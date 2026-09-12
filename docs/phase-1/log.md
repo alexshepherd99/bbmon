@@ -1773,3 +1773,21 @@ Decided for phase 1. A persistent journal capped at 64M was the alternative,
 and would have made the next unexplained restart diagnosable; declined, so the
 `restarts` row stays the only evidence one happened. The item stays in
 `BACKLOG.md`.
+
+### G3's reboot checklist, re-run cleanly
+
+One command at a time, each checked from here before the next, as the plan
+asks — the original run was muddied by an accidental repeat.
+
+- **A single service restart adds no row.** `systemctl restart bbmon-pinger`,
+  then a `/api/restarts` read generated after it: 12 rows before and after.
+- **The loop guard.** The watcher stopped and a trigger written as `bbmon`;
+  then the watcher started on top of it. `bbmon-reboot.service` stayed
+  inactive with an empty `ExecMainStartTimestamp` and the boot time did not
+  move, so `PathModified=` did not fire on a file that was merely present.
+  Restarting `bbmon-init` then removed it — "Removed a reboot trigger left over
+  from before this boot" — every unit came back active, and still 12 rows.
+- **The reboot from inside the sandbox** needed no staging: the two force
+  reboots at G5 were the web service, under `NoNewPrivileges=yes`, writing the
+  trigger, and the scheduled reboots of 2026-08-22 and 2026-08-25 were the
+  pinger doing the same.
