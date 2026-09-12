@@ -1766,3 +1766,10 @@ Eight minutes after boot: pinger 18 MB, speed test service 18 MB, web
 service 58 MB, 225 MB used of 905 MB. The web service's 38 MB idle figure from
 2026-08-30 was taken before the admin page grew; either way the machine has
 room to spare.
+
+### The journal stays volatile
+
+Decided for phase 1. A persistent journal capped at 64M was the alternative,
+and would have made the next unexplained restart diagnosable; declined, so the
+`restarts` row stays the only evidence one happened. The item stays in
+`BACKLOG.md`.
