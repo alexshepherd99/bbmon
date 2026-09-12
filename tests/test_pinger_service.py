@@ -42,13 +42,13 @@ def captured(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     captured: dict[str, Any] = {}
 
     def fake_run(
-        collector, database_path, flush_interval_seconds, between_cycles, reloading
+        collector, database_path, flush_interval_seconds, between_cycles, requests
     ):
         captured["collector"] = collector
         captured["database_path"] = database_path
         captured["flush"] = flush_interval_seconds
         captured["between_cycles"] = between_cycles
-        captured["reloading"] = reloading
+        captured["requests"] = requests
         return 0
 
     monkeypatch.setattr(pinger, "run_until_stopped", fake_run)
@@ -137,12 +137,12 @@ def reload_once(
     collectors: list[Any] = []
 
     def fake_run(
-        collector, database_path, flush_interval_seconds, between_cycles, reloading
+        collector, database_path, flush_interval_seconds, between_cycles, requests
     ):
         collectors.append(collector)
         if len(collectors) == 1:
             edit()
-            reloading.set()
+            requests.reload.set()
         return 0
 
     monkeypatch.setattr(service, "run_until_stopped", fake_run)

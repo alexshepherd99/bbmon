@@ -14,7 +14,7 @@ from bbmon import db
 from bbmon.collectors.base import CollectorError
 from bbmon.db import DatabaseError
 from bbmon.models import PingResult
-from bbmon.service import CollectorService, run_until_stopped
+from bbmon.service import CollectorService, ServiceRequests, run_until_stopped
 
 START = datetime(2026, 8, 9, 12, 0, 0, tzinfo=timezone.utc)
 
@@ -328,17 +328,49 @@ def test_sighup_comes_back_to_reload_and_still_writes_what_was_buffered(
     otherwise go with it. Buffering is set to an hour, so the row on disk can
     only have been written on the way out.
     """
-    reloading = threading.Event()
+    requests = ServiceRequests()
     collector = SelfStoppingCollector(signal.SIGHUP)
 
     exit_code = run_until_stopped(
-        collector, database, flush_interval_seconds=3600, reloading=reloading
+        collector, database, flush_interval_seconds=3600, requests=requests
     )
 
     assert exit_code == 0
-    assert reloading.is_set()
+    assert requests.reload.is_set()
     assert collector.cycles == 1
     assert row_count(database) == 1
+
+
+@pytest.mark.parametrize("signal_number", [signal.SIGTERM, signal.SIGHUP])
+def test_a_signal_between_two_runs_is_answered_by_the_next_one(
+    database: Path, restore_signal_handlers: None, signal_number: int
+) -> None:
+    """A reloading service runs this loop once per configuration.
+
+    Between two runs the previous run's handlers are still the ones installed,
+    so a signal landing there is answered by a run that has already ended. Lost,
+    a stop leaves systemd waiting out its timeout before it kills the service,
+    and a reload leaves the service on the old file.
+
+    The second run's collector stops the process itself, so a lost signal
+    shows up as a cycle that should never have run rather than as a hang.
+    """
+    requests = ServiceRequests()
+    run_until_stopped(
+        SelfStoppingCollector(signal.SIGHUP),
+        database,
+        flush_interval_seconds=3600,
+        requests=requests,
+    )
+    requests.reload.clear()  # as the caller does, before re-reading the file
+    os.kill(os.getpid(), signal_number)
+
+    collector = SelfStoppingCollector(signal.SIGTERM)
+    run_until_stopped(
+        collector, database, flush_interval_seconds=3600, requests=requests
+    )
+
+    assert collector.cycles == 0
 
 
 def test_sighup_is_left_alone_for_a_service_that_cannot_reload(

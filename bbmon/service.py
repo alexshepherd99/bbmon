@@ -152,36 +152,63 @@ class CollectorService:
         logger.debug("Wrote %d %s results", len(pending), self._collector.name)
 
 
+class ServiceRequests:
+    """What a reloading service has been asked to do, kept for the life of the process.
+
+    A service that answers SIGHUP by rebuilding calls :func:`run_until_stopped`
+    once per configuration, and between two calls the previous call's signal
+    handlers are still the ones installed. Held here rather than inside one
+    call, a request landing in that gap waits for the next run instead of being
+    answered by a run that has already ended — which for a stop would leave
+    systemd waiting out its timeout, and for a reload the service on the old
+    file.
+    """
+
+    def __init__(self) -> None:
+        #: Set by SIGTERM or SIGINT, and never cleared.
+        self.stop = threading.Event()
+        #: Set by SIGHUP, and cleared by the caller before it re-reads the file.
+        self.reload = threading.Event()
+
+
 def run_until_stopped(
     collector: Collector,
     database_path: str | Path,
     flush_interval_seconds: int = FLUSH_INTERVAL_SECONDS,
     between_cycles: Callable[[], None] = lambda: None,
-    reloading: threading.Event | None = None,
+    requests: ServiceRequests | None = None,
 ) -> int:
     """Run ``collector`` until the service is asked to stop, and report an exit code.
 
     Installs the SIGTERM and SIGINT handlers that let the loop finish its cycle
     and write what it is holding, rather than being killed mid-buffer.
 
-    :param reloading: Set here when SIGHUP asks for the configuration to be
-        read again — requirement 2. The loop then comes back exactly as it
-        would for SIGTERM, having finished its cycle and written what it held,
-        and the caller rebuilds from the new file and calls this again. A
-        caller that passes nothing leaves SIGHUP at its default, which
-        terminates the process: a service that cannot reload should not claim
-        to, and systemd only sends this to a unit declaring ``ExecReload=``.
+    :param requests: Passed by a service that reloads — requirement 2. SIGHUP
+        then sets ``requests.reload``, and the loop comes back exactly as it
+        would for SIGTERM, having finished its cycle and written what it held;
+        the caller rebuilds from the new file and calls this again with the
+        same object. A caller that passes nothing leaves SIGHUP at its default,
+        which terminates the process: a service that cannot reload should not
+        claim to, and systemd only sends this to a unit declaring
+        ``ExecReload=``.
     :return: ``0`` after a clean stop, ``1`` if the collector cannot run at all.
-        A reload returns ``0`` too — it is the caller's event, not the exit
-        code, that says which of the two happened.
+        A reload returns ``0`` too — it is ``requests``, not the exit code,
+        that says which of the two happened.
     """
-    stopping = threading.Event()
+    reloadable = requests is not None
+    if requests is None:
+        requests = ServiceRequests()
+    # Per run, unlike the requests: what this run's loop sleeps on and checks
+    # between cycles, so either request ends it without waiting out the
+    # interval.
+    wake = threading.Event()
 
     def request_stop(signum: int, _frame: FrameType | None) -> None:
         logger.info(
             "Received %s, finishing the current cycle", signal.Signals(signum).name
         )
-        stopping.set()
+        requests.stop.set()
+        wake.set()
 
     def request_reload(signum: int, _frame: FrameType | None) -> None:
         logger.info(
@@ -189,15 +216,18 @@ def run_until_stopped(
             "configuration",
             signal.Signals(signum).name,
         )
-        # Both, and in this order: the loop only ever watches for the stop, and
-        # the caller reads the reload flag once it has come back.
-        reloading.set()
-        stopping.set()
+        requests.reload.set()
+        wake.set()
 
     signal.signal(signal.SIGTERM, request_stop)
     signal.signal(signal.SIGINT, request_stop)
-    if reloading is not None:
+    if reloadable:
         signal.signal(signal.SIGHUP, request_reload)
+
+    # A request made since the previous run ended was answered by that run's
+    # handlers, which woke a loop that had already stopped. Honour it here.
+    if requests.stop.is_set() or requests.reload.is_set():
+        wake.set()
 
     service = CollectorService(
         collector,
@@ -206,17 +236,17 @@ def run_until_stopped(
         # Event.wait returns as soon as the event is set, so a stop request is
         # not left waiting out the rest of the collector's interval — which for
         # the speed test is measured in hours.
-        sleep=stopping.wait,
+        sleep=wake.wait,
         between_cycles=between_cycles,
     )
 
     try:
-        service.run(should_continue=lambda: not stopping.is_set())
+        service.run(should_continue=lambda: not wake.is_set())
     except CollectorError:
         logger.exception("The %s collector cannot run", collector.name)
         return 1
 
-    if reloading is not None and reloading.is_set():
+    if requests.reload.is_set() and not requests.stop.is_set():
         logger.info("Stopped cleanly to reload")
     else:
         logger.info("Stopped cleanly")

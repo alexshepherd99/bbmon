@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import logging
 import sys
-import threading
 
 from bbmon import db, reboot
 from bbmon.collectors.ping import PingCollector
@@ -27,7 +26,7 @@ from bbmon.config import Config, ConfigError, load, reloaded
 from bbmon.db import DatabaseError
 from bbmon.reboot import RebootAction, RebootError, RebootScheduler
 from bbmon.retention import RetentionPurge
-from bbmon.service import FLUSH_INTERVAL_SECONDS, run_until_stopped
+from bbmon.service import FLUSH_INTERVAL_SECONDS, ServiceRequests, run_until_stopped
 
 logger = logging.getLogger(__name__)
 
@@ -55,18 +54,18 @@ def main() -> int:
     # the only one that has to be right anyway. What it costs is the state
     # those objects hold: the purge runs again on the first cycle after a
     # reload, and a reboot already asked for is asked for again.
-    reloading = threading.Event()
+    requests = ServiceRequests()
     while True:
-        code = _run(config, reboot_action, reloading)
-        if not reloading.is_set():
+        code = _run(config, reboot_action, requests)
+        if not requests.reload.is_set():
             return code
 
-        reloading.clear()
+        requests.reload.clear()
         config = reloaded(config)
 
 
 def _run(
-    config: Config, reboot_action: RebootAction, reloading: threading.Event
+    config: Config, reboot_action: RebootAction, requests: ServiceRequests
 ) -> int:
     """Run the pinger on one configuration, until it is stopped or reloaded.
 
@@ -117,7 +116,7 @@ def _run(
         config.database_path,
         flush_interval_seconds=FLUSH_INTERVAL_SECONDS,
         between_cycles=between_cycles,
-        reloading=reloading,
+        requests=requests,
     )
 
 
