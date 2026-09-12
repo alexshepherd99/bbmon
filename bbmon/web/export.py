@@ -29,8 +29,10 @@ from bbmon import db
 CHUNK_BYTES = 64 * 1024
 
 #: The characters a spreadsheet reads as "this cell is a formula" rather than
-#: as text. Excel and Google Sheets both act on them when a download is opened.
-FORMULA_PREFIXES = ("=", "+", "-", "@")
+#: as text. Excel and Google Sheets both act on the first four when a download
+#: is opened; tab and carriage return are on OWASP's list too, because a
+#: spreadsheet can strip either and then read what follows.
+FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
 
 PING_COLUMNS = ("timestamp", "target", "latency_ms", "success")
 
@@ -135,9 +137,9 @@ def _as_text(value: str | None) -> str | None:
 
     ``isp`` and ``server`` come from the speed test tool's JSON, and the CSV
     is the one place bbmon hands external text to a program that executes
-    what it is given. A leading apostrophe is how both Excel and Sheets are
-    told a cell is text; neither displays it, and nothing else reading the
-    column sees it unless the value could have been a formula.
+    what it is given. A leading apostrophe is the usual way of telling a
+    spreadsheet a cell is text, and nothing reading the column sees it unless
+    the value could have been a formula.
 
     Only these two columns need it: every other column is either generated
     here or validated on the way in, and ``target`` cannot begin with one of

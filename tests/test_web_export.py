@@ -166,13 +166,18 @@ def test_the_speedtest_export_carries_every_recorded_field(
     ]
 
 
-@pytest.mark.parametrize("dangerous", ["=1+1", "+1", "-1", "@SUM(A1:A9)"])
+@pytest.mark.parametrize(
+    "dangerous", ["=1+1", "+1", "-1", "@SUM(A1:A9)", "\t=1+1", "\r=1+1"]
+)
 def test_the_speedtest_export_defuses_text_a_spreadsheet_would_execute(
     client: FlaskClient, database: Path, dangerous: str
 ) -> None:
     """``isp`` and ``server`` are Ookla's text, and a CSV is the one thing
     bbmon hands to a program that runs what it is given. A leading apostrophe
-    is how Excel and Sheets are told a cell is text; neither displays it.
+    is the usual way of telling a spreadsheet a cell is text.
+
+    Tab and carriage return are on OWASP's list alongside the four formula
+    characters: a spreadsheet can strip either and then read what follows.
     """
     store_speedtests(database, speedtest(at(day=10), isp=dangerous, server=dangerous))
 
