@@ -1687,3 +1687,82 @@ were restored. 548 tests.
 If the volatile journal is ever made persistent — the open G4 decision — the
 cap becomes `SystemMaxUse=`, whose default is a tenth of the root filesystem:
 around 2.5G on this card, which would want setting explicitly.
+
+## 2026-09-12 — G4 on the Pi: update.sh could not recover a deployed checkout
+
+### The defect
+
+The Pi's checkout was on `0c89154`, from August, with 29 tracked files
+modified by `deploy.sh` and 14 untracked — M6's new modules, units and tests,
+copied over before they existed in any commit the checkout had. `update.sh`
+discarded the modifications first, then pulled, and git refuses a pull that
+would overwrite untracked files. So the run would have stopped with the
+checkout on its old commit and M6's files beside it: code no commit contains,
+running at the next restart. Found by reading the checkout before running
+anything, then reproduced in a test. The 2026-08-19 run passed only because
+nothing untracked existed yet.
+
+Fixed by putting everything that can fail before anything is thrown away:
+fetch, then check the fetched commit is a fast-forward, then discard, then
+remove the untracked files the fetched commit tracks — listed, never silent —
+then merge. Untracked files it does not bring are left alone.
+
+Four tests against real git repositories, with a stand-in `sudo` that runs as
+the current user. All four red against the old sequence, extracted unchanged
+into a function first so the red was behavioural. Two needed correcting:
+
+- **The diverged-history fixture was not diverged.** It committed on top of
+  the checkout's own commit, which is still a fast-forward, and its first red
+  was the old code discarding a file, not the divergence. Rewritten to amend
+  the checkout's commit, then proven by deleting the fast-forward check.
+- **Deleting the fetch check left every test green.** git empties
+  `FETCH_HEAD` when a fetch fails, so the fast-forward check stops the update
+  anyway — with a message blaming a rewritten history. The test now asserts
+  the message says the fetch failed, and went red when the check was deleted.
+
+Also mutated: removing every untracked file rather than those in the way
+turned the leave-it-alone test red. 552 tests.
+
+### Verified on the Pi
+
+`deploy.sh` put the fixed script on the Pi, then `update.sh` ran by hand, since
+it needs a password the deploy sudoers list rightly does not grant. It took
+the checkout from `0c89154` to `46b6b82` with nothing left over: clean
+`git status`, the build stamp naming `update.sh`, every unit active, the
+installed units matching the repository's, the dashboard answering.
+
+That deploy also printed the unit-file warning for the pinger's unit, which
+had not changed — the mtime false alarm in `BACKLOG.md`, here from a file
+mutated and restored for a test. The installed unit's checksum matched.
+
+### Security checklist
+
+Every control under "Security posture" in `plan.md`, on the running Pi:
+
+- Every service runs as `bbmon` with `NoNewPrivileges`, `ProtectSystem=strict`,
+  `ProtectHome`, `PrivateTmp` and an empty bounding set; the config helper as
+  root in the `bbmon` group, with `ReadWritePaths=` naming only its two
+  directories. Both on-demand root units are `static`.
+- `/etc/bbmon/config.yaml` is `root:bbmon 0640`; the deploy sudoers drop-in is
+  `0440` and lists only the three restarts and the build stamp.
+- SSH refuses password and keyboard-interactive login.
+- A foreign `Host` gets 400 on a GET, on a config save and on the reboot
+  button; a config save with no CSRF token gets 403. The reboot was not
+  probed without a token, so that a broken check could not take the Pi down —
+  the save goes through the same check.
+- A missing page is a plain 404 with no debugger. No `shell=True`,
+  `yaml.load` or `debug=True` anywhere in the package.
+- `systemd-analyze security` scores the four units running bbmon's code as `bbmon` at 5.8, and the
+  helper 6.2. The reboot unit scores 9.6, UNSAFE, which is expected: it runs
+  none of bbmon's code and takes no input.
+
+The web app serves through Flask's own Werkzeug server. Its hazard is the
+debugger, which is off; not changed. Nothing new; the world-readable database
+remains the `UMask` item in `BACKLOG.md`.
+
+### Memory
+
+Eight minutes after boot: pinger 18 MB, speed test service 18 MB, web
+service 58 MB, 225 MB used of 905 MB. The web service's 38 MB idle figure from
+2026-08-30 was taken before the admin page grew; either way the machine has
+room to spare.
