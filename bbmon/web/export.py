@@ -28,6 +28,10 @@ from bbmon import db
 #: compromise between a syscall per row and holding the file in memory.
 CHUNK_BYTES = 64 * 1024
 
+#: The characters a spreadsheet reads as "this cell is a formula" rather than
+#: as text. Excel and Google Sheets both act on them when a download is opened.
+FORMULA_PREFIXES = ("=", "+", "-", "@")
+
 PING_COLUMNS = ("timestamp", "target", "latency_ms", "success")
 
 SPEEDTEST_COLUMNS = (
@@ -115,7 +119,33 @@ def speedtest_rows(conn: sqlite3.Connection, span: DateRange) -> Iterator[tuple]
     """Yield the speed tests in ``span``, shaped for :data:`SPEEDTEST_COLUMNS`."""
     for row in db.stream_speedtest_results(conn, start=span.start, end=span.end):
         timestamp, download, upload, ping_ms, isp, server, success = row
-        yield timestamp, download, upload, ping_ms, isp, server, _boolean(success)
+        yield (
+            timestamp,
+            download,
+            upload,
+            ping_ms,
+            _as_text(isp),
+            _as_text(server),
+            _boolean(success),
+        )
+
+
+def _as_text(value: str | None) -> str | None:
+    """Keep ``value`` from being run as a formula by whatever opens the file.
+
+    ``isp`` and ``server`` come from the speed test tool's JSON, and the CSV
+    is the one place bbmon hands external text to a program that executes
+    what it is given. A leading apostrophe is how both Excel and Sheets are
+    told a cell is text; neither displays it, and nothing else reading the
+    column sees it unless the value could have been a formula.
+
+    Only these two columns need it: every other column is either generated
+    here or validated on the way in, and ``target`` cannot begin with one of
+    these characters because the hostname rule forbids it.
+    """
+    if value is None or not value.startswith(FORMULA_PREFIXES):
+        return value
+    return "'" + value
 
 
 def _boolean(stored: int) -> str:

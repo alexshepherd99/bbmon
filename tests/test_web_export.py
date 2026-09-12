@@ -58,14 +58,19 @@ def ping(timestamp: datetime, target: str = "8.8.8.8", latency_ms=12.5) -> PingR
     )
 
 
-def speedtest(timestamp: datetime, download_mbps=95.0) -> SpeedtestResult:
+def speedtest(
+    timestamp: datetime,
+    download_mbps=95.0,
+    isp: str | None = "An ISP",
+    server: str | None = "A server",
+) -> SpeedtestResult:
     return SpeedtestResult(
         timestamp=timestamp,
         download_mbps=download_mbps,
         upload_mbps=18.0,
         ping_ms=14.0,
-        isp="An ISP",
-        server="A server",
+        isp=isp,
+        server=server,
         success=download_mbps is not None,
     )
 
@@ -159,6 +164,39 @@ def test_the_speedtest_export_carries_every_recorded_field(
         ],
         [at(day=10).isoformat(), "95.0", "18.0", "14.0", "An ISP", "A server", "true"],
     ]
+
+
+@pytest.mark.parametrize("dangerous", ["=1+1", "+1", "-1", "@SUM(A1:A9)"])
+def test_the_speedtest_export_defuses_text_a_spreadsheet_would_execute(
+    client: FlaskClient, database: Path, dangerous: str
+) -> None:
+    """``isp`` and ``server`` are Ookla's text, and a CSV is the one thing
+    bbmon hands to a program that runs what it is given. A leading apostrophe
+    is how Excel and Sheets are told a cell is text; neither displays it.
+    """
+    store_speedtests(database, speedtest(at(day=10), isp=dangerous, server=dangerous))
+
+    response = client.get("/export/speedtest.csv?start=2026-08-10&end=2026-08-10")
+
+    _, row = rows_of(response)
+    assert row[4] == "'" + dangerous
+    assert row[5] == "'" + dangerous
+
+
+def test_the_speedtest_export_writes_a_failed_run_that_has_neither_field(
+    client: FlaskClient, database: Path
+) -> None:
+    """A failure records none of the six measurements, so whatever defuses
+    those two columns has to cope with them being absent.
+    """
+    store_speedtests(
+        database, speedtest(at(day=10), download_mbps=None, isp=None, server=None)
+    )
+
+    response = client.get("/export/speedtest.csv?start=2026-08-10&end=2026-08-10")
+
+    _, row = rows_of(response)
+    assert row[4:] == ["", "", "false"]
 
 
 def test_the_speedtest_export_respects_the_range(
