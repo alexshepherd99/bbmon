@@ -1461,3 +1461,49 @@ both sides of it.
 it is a G5 item: the config helper installing as real root, the force-reboot
 button actually rebooting, and this reload actually being sent. 502 tests
 green.
+
+## 2026-09-12 — The CSV export's formula escape, the last of M6
+
+The one thing M6 left owing. The 2026-08-31 code review found that the export
+writes Ookla's `isp` and `server` straight from its JSON, so a value beginning
+`=`, `+`, `-` or `@` is executed when the download is opened in Excel or
+Sheets; it was recorded as an M6 control in `plan.md` rather than fixed at the
+time. This is that fix, and with it M6 is done in development.
+
+### Two columns, not every column
+
+The defence is a leading apostrophe, which both programs read as "this cell is
+text" and neither displays. Applying it to the whole row would have been
+easier to write and worse to read back: it would mark generated columns —
+timestamps, floats, the boolean — as needing a defence they do not, and the
+next person would have no way to tell which columns are external. `isp` and
+`server` are the whole of the external surface. Everything else is generated
+here or validated on the way in, and `target` cannot begin with one of those
+characters because `ping.targets` is checked against the hostname rule.
+
+The escape lives in `speedtest_rows`, where the two values enter the CSV, not
+in the writer — the writer has no idea which of its columns came from outside.
+
+### Tested
+
+Four parametrized cases, one per dangerous character, observed red against the
+unescaped export — the failure is the assertion, not an import. The failure
+row, which records none of the six measurements, could not be red first: it
+exercises the `None` path and passes whether or not the escape exists. It was
+confirmed by mutation instead — dropping `value is None or` from the guard
+turns it red with `AttributeError: 'NoneType' object has no attribute
+'startswith'`, and nothing else. The existing "carries every recorded field"
+test is what holds the other branch: an ordinary ISP name still comes out
+untouched.
+
+### Run, not just tested
+
+Against a live service on Crostini on a scratch database holding three speed
+tests: an ordinary one, one whose `isp` is `=cmd|' /C calc'!A0` and whose
+`server` is `@SUM(A1:A9)`, and a failure. The download carried the ordinary
+row unchanged, both hostile values apostrophe-prefixed, and the failure row as
+empty cells. Not run on a Pi, and it needs no Pi — nothing here touches the
+filesystem, a unit, or a subprocess.
+
+M6 is now complete in development and everything remaining in it is a G5 item.
+507 tests green.
