@@ -8,15 +8,17 @@ LAN-only, no authentication, designed to run on low-end Pi hardware.
 
 ## Status
 
-In development — phase 1. The pinger and speed test record to SQLite and the
-dashboard charts them live (M1, M3, M5), the whole system runs on the Pi under
-systemd via the bootstrap and deploy scripts (M2), and it logs its own
-restarts and reboots itself on a schedule (M4). Gates G1–G3 are cleared on the
-hardware. M6, the admin side, is complete in development: old pings are purged
-on a schedule, the data downloads as CSV, and the configuration is editable
-from an admin page that can also reboot the Pi, with the services re-reading
-it on SIGHUP rather than needing a restart. Next is gate G5 on the Pi, which
-that whole milestone is waiting on, then M7.
+**Phase 1 is complete**, verified on the hardware — every milestone done and
+every gate cleared, the last item on 2026-09-27.
+
+The whole system runs on the Pi under systemd via the bootstrap and deploy
+scripts. The pinger and speed test record to SQLite and the dashboard charts
+them live; it logs its own restarts and reboots itself on a schedule. Old
+pings are purged daily on a 30-day window, the data downloads as CSV, and the
+configuration is editable from an admin page that can also reboot the Pi, with
+the services re-reading it on SIGHUP rather than needing a restart.
+
+Phase 2 is not planned. Candidate work is in [`BACKLOG.md`](BACKLOG.md).
 
 ## Deploying to a Pi
 

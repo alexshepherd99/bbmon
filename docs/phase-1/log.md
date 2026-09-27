@@ -1837,3 +1837,53 @@ format would have been committed by the next `git add -A`. Now `*.local` and
 GitHub's traffic figures show 51 unique cloners and one unique page viewer in
 the last fourteen days. That confirms what the 2026-08-13 decision assumed:
 what is pushed is held by parties nobody can reach.
+
+## 2026-09-27 — The retention purge deleting, and phase 1 complete
+
+The last item of G4, and so of phase 1. From `journalctl -u bbmon-pinger` on
+the Pi, with the syslog prefix trimmed:
+
+```
+2026-09-25 09:17:49,400 INFO bbmon.retention: Purged 50703 ping results recorded before 2026-08-26T08:17:47.493249+00:00, keeping 30 days
+2026-09-26 09:17:56,890 INFO bbmon.retention: Purged 50763 ping results recorded before 2026-08-27T08:17:54.190990+00:00, keeping 30 days
+2026-09-27 09:18:03,910 INFO bbmon.retention: Purged 50517 ping results recorded before 2026-08-28T08:18:01.612209+00:00, keeping 30 days
+```
+
+Three consecutive daily runs rather than the one the gate asked for, and the
+extra two are where the value is: each of the three things below needs more
+than a single line to see at all.
+
+**The cutoff advances exactly 24 hours a run**, so the window really is 30 days
+and is not creeping in either direction. One line could not have shown that.
+
+**The due-check is behaving as a monotonic one.** The fire times drift +7s a day
+— 09:17:49, 09:17:56, 09:18:03 — because the interval is measured from the last
+purge with `time.monotonic()` and then lands on the next five-second ping cycle,
+rather than on a wall-clock schedule. The drift is the design working, not a
+fault in it: it is the same property that stops an NTP step on an RTC-less boot
+from skipping a purge or firing a burst of them.
+
+**Around 50.7k rows a day is a whole day's pings**, against a theoretical 51,840
+for three targets on a five-second interval — 97.8%. So the deletion is keeping
+pace with the writes, and the shortfall is cycles running marginally over five
+seconds rather than rows going missing on the way in.
+
+The journal reached back only to 2026-09-25, so the *first* deleting run — due
+around 2026-09-18 — is gone, along with everything before the last reboot. That
+is the volatile journal accepted at G4 doing exactly what was accepted, and it
+cost nothing here: at steady state every run deletes, so this evidence
+regenerates daily. It would have cost something had the question been "did the
+first one fire" rather than "does it work".
+
+**Asked at the same time: what the purge covers.** Only `ping_results`, which is
+requirement 3 and is already stated in `retention.py`'s module docstring and
+pinned by `test_purge_leaves_speed_tests_and_restarts_alone`. Recorded because
+the question is a reasonable one to ask again: `ping_results` grows by ~50k rows
+a day and the other two tables by ~8 and one-per-reboot, so they need no rule.
+No change.
+
+Nothing was changed on either machine. The suite was green on the development
+machine when this was recorded — 552 tests.
+
+**Phase 1 is complete**: every milestone done, every gate cleared. `plan.md` and
+the README now say so. `BACKLOG.md` holds what was deliberately left out.
